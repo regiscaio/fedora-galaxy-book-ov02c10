@@ -1,0 +1,130 @@
+--- a/sources/intel-ipu6/ov02c10.c
++++ b/module/ov02c10.c
+@@ -4,6 +4,7 @@
+ #include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
++#include <linux/dmi.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
+@@ -78,6 +79,15 @@
+ #define OV02C10_TEST_PATTERN_ENABLE	BIT(7)
+ #define OV02C10_TEST_PATTERN_BAR_SHIFT	0
+ 
++#define OV02C10_PIXEL_ARRAY_WIDTH	1928
++#define OV02C10_PIXEL_ARRAY_HEIGHT	1092
++#define OV02C10_ACTIVE_WIDTH		1920
++#define OV02C10_ACTIVE_HEIGHT		1080
++#define OV02C10_ACTIVE_LEFT		\
++	((OV02C10_PIXEL_ARRAY_WIDTH - OV02C10_ACTIVE_WIDTH) / 2)
++#define OV02C10_ACTIVE_TOP		\
++	((OV02C10_PIXEL_ARRAY_HEIGHT - OV02C10_ACTIVE_HEIGHT) / 2)
++
+ enum {
+ 	OV02C10_LINK_FREQ_400MHZ_INDEX,
+ };
+@@ -882,6 +892,8 @@
+ 	.s_ctrl = ov02c10_set_ctrl,
+ };
+ 
++static bool ov02c10_needs_rotate_quirk(const struct ov02c10 *ov02c10);
++
+ static int ov02c10_init_controls(struct ov02c10 *ov02c10)
+ {
+ 	struct v4l2_ctrl_handler *ctrl_hdlr;
+@@ -999,10 +1011,7 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	switch (ov02c10->module_name_index) {
+-	case MODULE_CJFME32:
+-	case MODULE_2BG203N3:
+-	case MODULE_KBFC645:
++	if (ov02c10_needs_rotate_quirk(ov02c10)) {
+ 		ret = ov02c10_read_reg(ov02c10, OV02C10_ROTATE_CONTROL,
+ 				       1, &rotate);
+ 		if (ret)
+@@ -1042,7 +1051,6 @@
+ 		if (ret)
+ 			dev_err(&client->dev,
+ 				"write ISP_Y_WIN_CONTROL fail: %d", ret);
+-		break;
+ 	}
+ 
+ 	ret = ov02c10_write_reg(ov02c10, OV02C10_REG_MODE_SELECT, 1,
+@@ -1378,6 +1386,37 @@
+ 	return 0;
+ }
+ 
++static int ov02c10_get_selection(struct v4l2_subdev *sd,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
++				 struct v4l2_subdev_pad_config *cfg,
++#else
++				 struct v4l2_subdev_state *sd_state,
++#endif
++				 struct v4l2_subdev_selection *sel)
++{
++	if (sel->pad != 0)
++		return -EINVAL;
++
++	switch (sel->target) {
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = OV02C10_PIXEL_ARRAY_WIDTH;
++		sel->r.height = OV02C10_PIXEL_ARRAY_HEIGHT;
++		return 0;
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP:
++		sel->r.left = OV02C10_ACTIVE_LEFT;
++		sel->r.top = OV02C10_ACTIVE_TOP;
++		sel->r.width = OV02C10_ACTIVE_WIDTH;
++		sel->r.height = OV02C10_ACTIVE_HEIGHT;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
+ static int ov02c10_enum_mbus_code(struct v4l2_subdev *sd,
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
+ 				  struct v4l2_subdev_pad_config *cfg,
+@@ -1443,6 +1482,7 @@
+ static const struct v4l2_subdev_pad_ops ov02c10_pad_ops = {
+ 	.set_fmt = ov02c10_set_format,
+ 	.get_fmt = ov02c10_get_format,
++	.get_selection = ov02c10_get_selection,
+ 	.enum_mbus_code = ov02c10_enum_mbus_code,
+ 	.enum_frame_size = ov02c10_enum_frame_size,
+ };
+@@ -1460,6 +1500,28 @@
+ 	.open = ov02c10_open,
+ };
+ 
++static const struct dmi_system_id ov02c10_rotate_quirks[] = {
++	{
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "960XGL"),
++		},
++	},
++	{ }
++};
++
++static bool ov02c10_needs_rotate_quirk(const struct ov02c10 *ov02c10)
++{
++	switch (ov02c10->module_name_index) {
++	case MODULE_CJFME32:
++	case MODULE_2BG203N3:
++	case MODULE_KBFC645:
++		return true;
++	default:
++		return dmi_check_system(ov02c10_rotate_quirks);
++	}
++}
++
+ static void ov02c10_read_mipi_lanes(struct ov02c10 *ov02c10)
+ {
+ 	struct i2c_client *client = v4l2_get_subdevdata(&ov02c10->sd);

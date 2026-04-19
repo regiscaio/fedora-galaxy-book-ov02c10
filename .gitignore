@@ -1,0 +1,17 @@
+dist/
+.rpmbuild/
+*.rpm
+*.src.rpm
+*.tar.gz
+*.log
+
+module/*.o
+module/*.ko
+module/*.mod
+module/*.mod.c
+module/*.mod.o
+module/.*.cmd
+module/Module.symvers
+module/modules.order
+module/.tmp_versions/
+
