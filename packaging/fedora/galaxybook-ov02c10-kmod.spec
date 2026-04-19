@@ -2,8 +2,8 @@
 %global prjname galaxybook-ov02c10
 
 Name:           %{prjname}-kmod
-Version:        0.1.0
-Release:        6%{?dist}
+Version:        1.0.0
+Release:        1%{?dist}
 Summary:        Intel IPU6-aligned OV02C10 camera driver for Samsung Galaxy Book on Fedora
 License:        GPL-2.0-only
 URL:            https://github.com/regiscaio/fedora-galaxy-book-ov02c10
@@ -65,21 +65,5 @@ done
 %{_modprobedir}/galaxybook-ov02c10.conf
 
 %changelog
-* Sun Apr 19 2026 Caio Régis <regiscaio@users.noreply.github.com> - 0.1.0-6
-- Apply the OV02C10 rotation quirk on Samsung Galaxy Book4 Ultra systems
-
-* Sun Apr 19 2026 Caio Régis <regiscaio@users.noreply.github.com> - 0.1.0-5
-- Load ov02c10 automatically at boot and order it before intel_ipu6_isys
-
-* Sun Apr 19 2026 Caio Régis <regiscaio@users.noreply.github.com> - 0.1.0-4
-- Rebase the packaged OV02C10 driver on the Intel IPU6 Fedora source base
-- Keep only the minimal downstream crop-selection metadata on top
-
-* Sun Apr 19 2026 Caio Régis <regiscaio@users.noreply.github.com> - 0.1.0-3
-- Refresh the packaged README to point users to the dedicated setup and camera apps
-
-* Sat Apr 18 2026 Caio Régis <regiscaio@users.noreply.github.com> - 0.1.0-2
-- Build arch-specific RPMs so akmods can generate the kernel module payload
-
-* Sat Apr 18 2026 Caio Régis <regiscaio@users.noreply.github.com> - 0.1.0-1
-- Initial akmod packaging for the Galaxy Book OV02C10 camera driver
+* Sun Apr 19 2026 Caio Régis <regiscaio@users.noreply.github.com> - 1.0.0-1
+- Start the stable RPM line at 1.0.0
