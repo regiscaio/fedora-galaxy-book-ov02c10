@@ -1,5 +1,21 @@
 # Galaxy Book OV02C10
 
+## Instalação rápida
+
+Para instalar o driver a partir do repositório DNF público:
+
+```bash
+sudo dnf config-manager addrepo --from-repofile=https://packages.caioregis.com/fedora/caioregis.repo
+sudo dnf install akmod-galaxybook-ov02c10
+```
+
+Na prática, para uma experiência completa com o Galaxy Book4 Ultra, também faz
+sentido instalar:
+
+```bash
+sudo dnf install galaxybook-camera galaxybook-setup
+```
+
 `fedora-galaxy-book-ov02c10` é o repositório do driver `ov02c10` ajustado para
 uso em notebooks Samsung Galaxy Book no Fedora, com foco atual no
 **Galaxy Book4 Ultra**.
