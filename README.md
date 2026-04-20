@@ -1,3 +1,10 @@
+<p>
+  <a href="README.md">🇧🇷 Português</a>
+  <a href="README.en.md">🇺🇸 English</a>
+  <a href="README.es.md">🇪🇸 Español</a>
+  <a href="README.it.md">🇮🇹 Italiano</a>
+</p>
+
 # Galaxy Book OV02C10
 
 ## Instalação rápida
