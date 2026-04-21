@@ -66,5 +66,3 @@ done
 %{_modprobedir}/galaxybook-ov02c10.conf
 
 %changelog
-* Sun Apr 19 2026 Caio Régis <regiscaio@users.noreply.github.com> - 1.0.0-1
-- Start the stable RPM line at 1.0.0

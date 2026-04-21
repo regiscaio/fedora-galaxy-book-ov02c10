@@ -6,7 +6,7 @@ VERSION := $(shell $(VERSION_SCRIPT))
 DIST_DIR := dist
 RPM_SPEC := packaging/fedora/$(PACKAGE_NAME).spec
 RPMBUILD_DIR := .rpmbuild
-RPM_VERSION_DEFINE := --define "pkg_version_override $(VERSION)"
+GENERATED_SPEC := $(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec
 
 .PHONY: help build clean export-patch refresh-base dist srpm rpm
 
@@ -43,13 +43,20 @@ dist: clean export-patch
 		-czf $(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz \
 		.
 
+$(GENERATED_SPEC): $(RPM_SPEC)
+	mkdir -p "$(dir $@)"
+	sed \
+		-e 's/^Version:[[:space:]].*/Version:        $(VERSION)/' \
+		-e 's/^Release:[[:space:]].*/Release:        1%{?dist}/' \
+		"$<" > "$@"
+
 srpm: dist
 	@set -euo pipefail; \
 	rm -rf "$(RPMBUILD_DIR)"; \
 	mkdir -p "$(RPMBUILD_DIR)"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}; \
 	cp "$(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz" "$(RPMBUILD_DIR)/SOURCES/"; \
-	cp "$(RPM_SPEC)" "$(RPMBUILD_DIR)/SPECS/"; \
-	rpmbuild -bs "$(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)" $(RPM_VERSION_DEFINE); \
+	$(MAKE) "$(GENERATED_SPEC)"; \
+	rpmbuild -bs "$(GENERATED_SPEC)" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)"; \
 	cp "$(RPMBUILD_DIR)"/SRPMS/*.src.rpm "$(DIST_DIR)/"
 
 rpm: dist
@@ -57,7 +64,7 @@ rpm: dist
 	rm -rf "$(RPMBUILD_DIR)"; \
 	mkdir -p "$(RPMBUILD_DIR)"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}; \
 	cp "$(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz" "$(RPMBUILD_DIR)/SOURCES/"; \
-	cp "$(RPM_SPEC)" "$(RPMBUILD_DIR)/SPECS/"; \
-	rpmbuild -ba "$(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)" $(RPM_VERSION_DEFINE); \
+	$(MAKE) "$(GENERATED_SPEC)"; \
+	rpmbuild -ba "$(GENERATED_SPEC)" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)"; \
 	cp "$(RPMBUILD_DIR)"/SRPMS/*.src.rpm "$(DIST_DIR)/"; \
 	find "$(RPMBUILD_DIR)/RPMS" -type f -name '*.rpm' -exec cp {} "$(DIST_DIR)/" \;
