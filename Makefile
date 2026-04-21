@@ -2,11 +2,15 @@ SHELL := /usr/bin/env bash
 
 PACKAGE_NAME := galaxybook-ov02c10-kmod
 VERSION_SCRIPT := ./scripts/package-version.sh
+SOURCE_DATE_EPOCH_SCRIPT := ./scripts/source-date-epoch.sh
 VERSION := $(shell $(VERSION_SCRIPT))
+SOURCE_DATE_EPOCH := $(shell $(SOURCE_DATE_EPOCH_SCRIPT))
+export SOURCE_DATE_EPOCH
 DIST_DIR := dist
 RPM_SPEC := packaging/fedora/$(PACKAGE_NAME).spec
 RPMBUILD_DIR := .rpmbuild
 GENERATED_SPEC := $(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec
+TAR_REPRO_FLAGS := --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" --owner=0 --group=0 --numeric-owner
 
 .PHONY: help build clean export-patch refresh-base dist srpm rpm
 
@@ -39,6 +43,7 @@ dist: clean export-patch
 		--exclude='./.git' \
 		--exclude='./dist' \
 		--exclude='./.rpmbuild' \
+		$(TAR_REPRO_FLAGS) \
 		--transform='s,^\./,$(PACKAGE_NAME)-$(VERSION)/,' \
 		-czf $(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz \
 		.

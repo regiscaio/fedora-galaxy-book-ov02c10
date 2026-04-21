@@ -2,6 +2,7 @@
 %global prjname galaxybook-ov02c10
 %global pkg_version %{?pkg_version_override}%{!?pkg_version_override:1.0.0}
 %global source_date_epoch_from_changelog 0
+%global clamp_mtime_to_source_date_epoch 1
 
 Name:           %{prjname}-kmod
 Version:        %{pkg_version}
