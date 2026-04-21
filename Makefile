@@ -1,10 +1,12 @@
 SHELL := /usr/bin/env bash
 
 PACKAGE_NAME := galaxybook-ov02c10-kmod
-VERSION := $(shell sed -n 's/^Version:[[:space:]]*//p' packaging/fedora/$(PACKAGE_NAME).spec | head -n1)
+VERSION_SCRIPT := ./scripts/package-version.sh
+VERSION := $(shell $(VERSION_SCRIPT))
 DIST_DIR := dist
 RPM_SPEC := packaging/fedora/$(PACKAGE_NAME).spec
 RPMBUILD_DIR := .rpmbuild
+RPM_VERSION_DEFINE := --define "pkg_version_override $(VERSION)"
 
 .PHONY: help build clean export-patch refresh-base dist srpm rpm
 
@@ -47,7 +49,7 @@ srpm: dist
 	mkdir -p "$(RPMBUILD_DIR)"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}; \
 	cp "$(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz" "$(RPMBUILD_DIR)/SOURCES/"; \
 	cp "$(RPM_SPEC)" "$(RPMBUILD_DIR)/SPECS/"; \
-	rpmbuild -bs "$(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)"; \
+	rpmbuild -bs "$(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)" $(RPM_VERSION_DEFINE); \
 	cp "$(RPMBUILD_DIR)"/SRPMS/*.src.rpm "$(DIST_DIR)/"
 
 rpm: dist
@@ -56,6 +58,6 @@ rpm: dist
 	mkdir -p "$(RPMBUILD_DIR)"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}; \
 	cp "$(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz" "$(RPMBUILD_DIR)/SOURCES/"; \
 	cp "$(RPM_SPEC)" "$(RPMBUILD_DIR)/SPECS/"; \
-	rpmbuild -ba "$(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)"; \
+	rpmbuild -ba "$(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)" $(RPM_VERSION_DEFINE); \
 	cp "$(RPMBUILD_DIR)"/SRPMS/*.src.rpm "$(DIST_DIR)/"; \
 	find "$(RPMBUILD_DIR)/RPMS" -type f -name '*.rpm' -exec cp {} "$(DIST_DIR)/" \;

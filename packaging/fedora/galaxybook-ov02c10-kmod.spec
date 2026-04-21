@@ -1,8 +1,9 @@
 %global debug_package %{nil}
 %global prjname galaxybook-ov02c10
+%global pkg_version %{?pkg_version_override}%{!?pkg_version_override:1.0.0}
 
 Name:           %{prjname}-kmod
-Version:        1.0.0
+Version:        %{pkg_version}
 Release:        1%{?dist}
 Summary:        Intel IPU6-aligned OV02C10 camera driver for Samsung Galaxy Book on Fedora
 License:        GPL-2.0-only
