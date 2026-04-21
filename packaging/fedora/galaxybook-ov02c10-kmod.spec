@@ -1,6 +1,7 @@
 %global debug_package %{nil}
 %global prjname galaxybook-ov02c10
 %global pkg_version %{?pkg_version_override}%{!?pkg_version_override:1.0.0}
+%global source_date_epoch_from_changelog 0
 
 Name:           %{prjname}-kmod
 Version:        %{pkg_version}
