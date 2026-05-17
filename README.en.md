@@ -65,7 +65,8 @@ The repository separates three layers clearly:
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` asking for `ov02c10`
   before `intel_ipu6_isys`.
 - `data/depmod.d/galaxybook-ov02c10.conf`: override to prioritize the packaged
-  module in `extra/galaxybook-ov02c10` over Fedora's in-tree copy.
+  module in `extra/galaxybook-ov02c10/drivers/media/i2c` over Fedora's in-tree
+  copy.
 
 Fedora packaging generates:
 
@@ -143,7 +144,7 @@ The common package also installs three important configurations:
 - a `modules-load.d` file to load `ov02c10` at boot;
 - a `softdep` to prefer `ov02c10` before `intel_ipu6_isys`;
 - a `depmod.d` override to prioritize the packaged module in
-  `extra/galaxybook-ov02c10` over Fedora's in-tree driver.
+  `extra/galaxybook-ov02c10/drivers/media/i2c` over Fedora's in-tree driver.
 
 That avoids a state where the fixed module exists on disk but `depmod` still
 points `ov02c10` to the kernel's in-tree driver.
@@ -183,8 +184,8 @@ journalctl -b -k | grep -i ov02c10
 Expected results:
 
 - `ov02c10` should resolve to a higher-priority external path, normally
-  `extra/galaxybook-ov02c10` through `depmod.d`, not the in-tree
-  `kernel/drivers/...` copy;
+  `extra/galaxybook-ov02c10/drivers/media/i2c` through `depmod.d`, not the
+  in-tree `kernel/drivers/...` copy;
 - the module should actually be loaded in the kernel, not only installed on
   disk;
 - the camera should be visible to `libcamera`;

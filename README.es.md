@@ -65,7 +65,8 @@ El repositorio separa claramente tres capas:
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` para pedir `ov02c10`
   antes de `intel_ipu6_isys`.
 - `data/depmod.d/galaxybook-ov02c10.conf`: override para priorizar el modulo
-  empaquetado en `extra/galaxybook-ov02c10` sobre la copia in-tree de Fedora.
+  empaquetado en `extra/galaxybook-ov02c10/drivers/media/i2c` sobre la copia
+  in-tree de Fedora.
 
 El empaquetado Fedora genera:
 
@@ -144,7 +145,8 @@ El paquete común también instala tres configuraciones importantes:
 - un archivo en `modules-load.d` para cargar `ov02c10` en el arranque;
 - un `softdep` para preferir `ov02c10` antes de `intel_ipu6_isys`;
 - un override en `depmod.d` para priorizar el modulo empaquetado en
-  `extra/galaxybook-ov02c10` sobre el driver in-tree de Fedora.
+  `extra/galaxybook-ov02c10/drivers/media/i2c` sobre el driver in-tree de
+  Fedora.
 
 Eso evita un estado en el que el modulo corregido existe en disco, pero
 `depmod` sigue apuntando `ov02c10` al driver in-tree del kernel.
@@ -184,8 +186,8 @@ journalctl -b -k | grep -i ov02c10
 Lo esperado es:
 
 - el módulo `ov02c10` viniendo de una ruta externa prioritaria, normalmente
-  `extra/galaxybook-ov02c10` via `depmod.d`, y no de `kernel/drivers/...`
-  in-tree;
+  `extra/galaxybook-ov02c10/drivers/media/i2c` via `depmod.d`, y no de
+  `kernel/drivers/...` in-tree;
 - el módulo realmente cargado en el kernel, y no solo instalado en disco;
 - la cámara apareciendo en `libcamera`;
 - ausencia del error `probe with driver ov02c10 failed with error -22`.
