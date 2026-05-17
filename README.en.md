@@ -38,8 +38,8 @@ system.
 In the validated April 2026 state, this driver already covers the critical
 Galaxy Book4 Ultra scenario:
 
-- the fixed module can be loaded from `updates/` with `Secure Boot` enabled,
-  as long as the host akmods signing flow is configured;
+- the fixed module can be loaded from an RPM-managed external path with
+  `Secure Boot` enabled, as long as the host akmods signing flow is configured;
 - the camera becomes visible again to `libcamera` when the system actually uses
   the fixed module instead of the in-tree kernel copy;
 - the rotation quirk for the Galaxy Book4 Ultra prevents the image from
@@ -64,6 +64,8 @@ The repository separates three layers clearly:
   module is loaded automatically at boot;
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` asking for `ov02c10`
   before `intel_ipu6_isys`.
+- `data/depmod.d/galaxybook-ov02c10.conf`: override to prioritize the packaged
+  module in `extra/galaxybook-ov02c10` over Fedora's in-tree copy.
 
 Fedora packaging generates:
 
@@ -136,13 +138,15 @@ files in the same transaction (`common`, `akmod`, and `kmod`). An old
 `kmod-galaxybook-ov02c10` metapackage can pin the previous `akmod` version
 through an exact dependency and make `dnf` ignore the driver update.
 
-The common package also installs two important configurations:
+The common package also installs three important configurations:
 
 - a `modules-load.d` file to load `ov02c10` at boot;
-- a `softdep` to prefer `ov02c10` before `intel_ipu6_isys`.
+- a `softdep` to prefer `ov02c10` before `intel_ipu6_isys`;
+- a `depmod.d` override to prioritize the packaged module in
+  `extra/galaxybook-ov02c10` over Fedora's in-tree driver.
 
-That avoids a state where the module exists in `/lib/modules/.../updates` but
-never gets loaded by the kernel.
+That avoids a state where the fixed module exists on disk but `depmod` still
+points `ov02c10` to the kernel's in-tree driver.
 
 If you need to force a module rebuild, use:
 
@@ -151,6 +155,19 @@ sudo akmods --force --akmod galaxybook-ov02c10 --kernels "$(uname -r)"
 sudo depmod -a
 sudo reboot
 ```
+
+If DNF, PackageKit, or the transaction log starts showing `depmod` warnings
+that mention `/lib/modules/<kernel>/updates/ov02c10.ko`, look for stale module
+copies that are not owned by any RPM:
+
+```bash
+make cleanup-stale-modules
+sudo make cleanup-stale-modules-apply
+```
+
+The cleanup target only removes old direct overrides in `updates/` or `extra/`
+when they are not owned by any package. Fedora's in-tree module and Intel
+IPU6-packaged modules are left untouched.
 
 ### Validation after installation
 
@@ -165,8 +182,9 @@ journalctl -b -k | grep -i ov02c10
 
 Expected results:
 
-- `ov02c10` should resolve to a higher-priority external path, preferably
-  `updates/`, not the in-tree `kernel/drivers/...` copy;
+- `ov02c10` should resolve to a higher-priority external path, normally
+  `extra/galaxybook-ov02c10` through `depmod.d`, not the in-tree
+  `kernel/drivers/...` copy;
 - the module should actually be loaded in the kernel, not only installed on
   disk;
 - the camera should be visible to `libcamera`;
@@ -188,8 +206,11 @@ sed -n '1,260p' /var/cache/akmods/galaxybook-ov02c10/*.failed.log
 ```
 
 If packages are installed and `akmods` is healthy, but `modinfo -n ov02c10`
-still resolves to `kernel/drivers/...`, the next step is to **adjust the fixed
-module priority**. That flow is already exposed in the graphical interface at:
+still resolves to `kernel/drivers/...`, the generated `akmods` package probably
+does not contain the `kmod-galaxybook-ov02c10-<kernel>` payload. Reinstall the
+fixed version, force `akmods` again, and confirm that `modinfo -n ov02c10`
+points to an external path before rebooting. The graphical interface also
+exposes this flow at:
 
 - <https://github.com/regiscaio/fedora-galaxy-book-setup>
 

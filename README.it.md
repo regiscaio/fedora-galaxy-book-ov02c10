@@ -38,8 +38,9 @@ stack IPU6 installato sul sistema.
 Nello stato validato ad aprile 2026, questo driver copre già lo scenario
 critico del Galaxy Book4 Ultra:
 
-- il modulo corretto può essere caricato da `updates/` con `Secure Boot`
-  attivo, purché il flusso di firma di akmods sia configurato sull'host;
+- il modulo corretto puo essere caricato da un percorso esterno gestito da RPM
+  con `Secure Boot` attivo, purche il flusso di firma di akmods sia
+  configurato sull'host;
 - la fotocamera torna visibile a `libcamera` quando il sistema usa davvero il
   modulo corretto al posto della copia in-tree del kernel;
 - la quirk di rotazione per il Galaxy Book4 Ultra evita che l'immagine appaia
@@ -63,6 +64,9 @@ Il repository separa chiaramente tre livelli:
   il caricamento automatico del modulo all'avvio;
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` per richiedere
   `ov02c10` prima di `intel_ipu6_isys`.
+- `data/depmod.d/galaxybook-ov02c10.conf`: override per dare priorita al
+  modulo pacchettizzato in `extra/galaxybook-ov02c10` rispetto alla copia
+  in-tree di Fedora.
 
 Il packaging Fedora genera:
 
@@ -139,13 +143,15 @@ stessa transazione (`common`, `akmod` e `kmod`). Un vecchio metapacchetto
 tramite dipendenza esatta e fare sì che `dnf` ignori l'aggiornamento del
 driver.
 
-Il pacchetto comune installa inoltre due configurazioni importanti:
+Il pacchetto comune installa inoltre tre configurazioni importanti:
 
 - un file in `modules-load.d` per caricare `ov02c10` all'avvio;
-- un `softdep` per preferire `ov02c10` prima di `intel_ipu6_isys`.
+- un `softdep` per preferire `ov02c10` prima di `intel_ipu6_isys`;
+- un override in `depmod.d` per dare priorita al modulo pacchettizzato in
+  `extra/galaxybook-ov02c10` rispetto al driver in-tree di Fedora.
 
-Questo evita uno stato in cui il modulo esiste in `/lib/modules/.../updates`
-ma non viene mai realmente caricato dal kernel.
+Questo evita uno stato in cui il modulo corretto esiste su disco, ma `depmod`
+continua a puntare `ov02c10` al driver in-tree del kernel.
 
 Se è necessario forzare la ricompilazione del modulo, usa:
 
@@ -154,6 +160,19 @@ sudo akmods --force --akmod galaxybook-ov02c10 --kernels "$(uname -r)"
 sudo depmod -a
 sudo reboot
 ```
+
+Se DNF, PackageKit o il registro della transazione mostra avvisi di `depmod`
+che citano `/lib/modules/<kernel>/updates/ov02c10.ko`, cerca copie obsolete che
+non appartengono a nessun RPM:
+
+```bash
+make cleanup-stale-modules
+sudo make cleanup-stale-modules-apply
+```
+
+Il target di pulizia rimuove solo vecchi override diretti in `updates/` o
+`extra/` quando non appartengono ad alcun pacchetto. Il modulo in-tree di
+Fedora e i moduli pacchettizzati da Intel IPU6 restano intatti.
 
 ### Verifica dopo l'installazione
 
@@ -169,7 +188,8 @@ journalctl -b -k | grep -i ov02c10
 Il risultato atteso è:
 
 - il modulo `ov02c10` deve provenire da un percorso esterno prioritario,
-  preferibilmente `updates/`, e non dalla copia in-tree `kernel/drivers/...`;
+  normalmente `extra/galaxybook-ov02c10` tramite `depmod.d`, e non dalla copia
+  in-tree `kernel/drivers/...`;
 - il modulo deve essere effettivamente caricato nel kernel, non solo installato
   su disco;
 - la fotocamera deve apparire in `libcamera`;
@@ -192,9 +212,11 @@ sed -n '1,260p' /var/cache/akmods/galaxybook-ov02c10/*.failed.log
 ```
 
 Se i pacchetti sono installati e `akmods` è in salute, ma `modinfo -n ov02c10`
-continua a risolversi in `kernel/drivers/...`, il passo successivo è
-**regolare la priorità del modulo corretto**. Quel flusso è già esposto
-nell'interfaccia grafica in:
+continua a risolversi in `kernel/drivers/...`, probabilmente il pacchetto
+generato da `akmods` non contiene il payload
+`kmod-galaxybook-ov02c10-<kernel>`. Reinstalla la versione corretta, forza
+nuovamente `akmods` e conferma che `modinfo -n ov02c10` punti a un percorso
+esterno prima di riavviare. L'interfaccia grafica espone anche questo flusso in:
 
 - <https://github.com/regiscaio/fedora-galaxy-book-setup>
 

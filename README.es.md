@@ -38,9 +38,9 @@ sistema.
 En el estado validado de abril de 2026, este controlador ya cubre el escenario
 crítico del Galaxy Book4 Ultra:
 
-- el módulo corregido puede cargarse desde `updates/` con `Secure Boot`
-  activado, siempre que el flujo de firma de akmods esté configurado en el
-  host;
+- el modulo corregido puede cargarse desde una ruta externa gestionada por RPM
+  con `Secure Boot` activado, siempre que el flujo de firma de akmods este
+  configurado en el host;
 - la cámara vuelve a aparecer en `libcamera` cuando el sistema realmente usa
   el módulo corregido en lugar de la copia in-tree del kernel;
 - la quirk de rotación del Galaxy Book4 Ultra evita que la imagen salga
@@ -64,6 +64,8 @@ El repositorio separa claramente tres capas:
   que el módulo se cargue automáticamente en el arranque;
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` para pedir `ov02c10`
   antes de `intel_ipu6_isys`.
+- `data/depmod.d/galaxybook-ov02c10.conf`: override para priorizar el modulo
+  empaquetado en `extra/galaxybook-ov02c10` sobre la copia in-tree de Fedora.
 
 El empaquetado Fedora genera:
 
@@ -137,13 +139,15 @@ archivos en la misma transacción (`common`, `akmod` y `kmod`). Un metapaquete
 `kmod-galaxybook-ov02c10` antiguo puede fijar la versión previa del `akmod`
 por dependencia exacta y hacer que `dnf` ignore la actualización del driver.
 
-El paquete común también instala dos configuraciones importantes:
+El paquete común también instala tres configuraciones importantes:
 
 - un archivo en `modules-load.d` para cargar `ov02c10` en el arranque;
-- un `softdep` para preferir `ov02c10` antes de `intel_ipu6_isys`.
+- un `softdep` para preferir `ov02c10` antes de `intel_ipu6_isys`;
+- un override en `depmod.d` para priorizar el modulo empaquetado en
+  `extra/galaxybook-ov02c10` sobre el driver in-tree de Fedora.
 
-Eso evita un estado en el que el módulo existe en `/lib/modules/.../updates`
-pero nunca llega a cargarse en el kernel.
+Eso evita un estado en el que el modulo corregido existe en disco, pero
+`depmod` sigue apuntando `ov02c10` al driver in-tree del kernel.
 
 Si necesitas forzar la recompilación del módulo, usa:
 
@@ -152,6 +156,19 @@ sudo akmods --force --akmod galaxybook-ov02c10 --kernels "$(uname -r)"
 sudo depmod -a
 sudo reboot
 ```
+
+Si DNF, PackageKit o el registro de transaccion vuelve a mostrar avisos de
+`depmod` citando `/lib/modules/<kernel>/updates/ov02c10.ko`, busca copias
+legadas que no pertenezcan a ningun RPM:
+
+```bash
+make cleanup-stale-modules
+sudo make cleanup-stale-modules-apply
+```
+
+El objetivo de limpieza elimina solamente overrides directos antiguos en
+`updates/` o `extra/` que no pertenezcan a ningun paquete. El modulo in-tree de
+Fedora y los modulos empaquetados por Intel IPU6 permanecen intactos.
 
 ### Validación después de instalar
 
@@ -166,8 +183,9 @@ journalctl -b -k | grep -i ov02c10
 
 Lo esperado es:
 
-- el módulo `ov02c10` viniendo de una ruta externa prioritaria, idealmente
-  `updates/`, y no de `kernel/drivers/...` in-tree;
+- el módulo `ov02c10` viniendo de una ruta externa prioritaria, normalmente
+  `extra/galaxybook-ov02c10` via `depmod.d`, y no de `kernel/drivers/...`
+  in-tree;
 - el módulo realmente cargado en el kernel, y no solo instalado en disco;
 - la cámara apareciendo en `libcamera`;
 - ausencia del error `probe with driver ov02c10 failed with error -22`.
@@ -188,9 +206,11 @@ sed -n '1,260p' /var/cache/akmods/galaxybook-ov02c10/*.failed.log
 ```
 
 Si los paquetes están instalados y `akmods` está sano, pero `modinfo -n
-ov02c10` sigue resolviendo a `kernel/drivers/...`, el siguiente paso es
-**ajustar la prioridad del módulo corregido**. Ese flujo ya está expuesto en la
-interfaz gráfica en:
+ov02c10` sigue resolviendo a `kernel/drivers/...`, el paquete generado por
+`akmods` probablemente no contiene el payload
+`kmod-galaxybook-ov02c10-<kernel>`. Reinstala la version corregida, fuerza
+`akmods` otra vez y confirma que `modinfo -n ov02c10` apunta a una ruta externa
+antes de reiniciar. La interfaz grafica tambien expone ese flujo en:
 
 - <https://github.com/regiscaio/fedora-galaxy-book-setup>
 

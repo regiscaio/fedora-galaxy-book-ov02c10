@@ -12,13 +12,15 @@ RPMBUILD_DIR := .rpmbuild
 GENERATED_SPEC := $(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec
 TAR_REPRO_FLAGS := --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" --owner=0 --group=0 --numeric-owner
 
-.PHONY: help build clean export-patch refresh-base dist srpm rpm
+.PHONY: help build clean cleanup-stale-modules cleanup-stale-modules-apply export-patch refresh-base dist srpm rpm
 
 help:
 	@printf '%s\n' \
 		'make build        Build the external module for the running kernel' \
 		'make export-patch Regenerate patches/0001-galaxy-book-ov02c10-downstream.patch' \
 		'make refresh-base Refresh sources/intel-ipu6/ov02c10.c from the installed Intel IPU6 source RPM' \
+		'make cleanup-stale-modules       Show stale unowned ov02c10 module copies' \
+		'sudo make cleanup-stale-modules-apply Remove stale unowned ov02c10 module copies' \
 		'make dist         Create a source tarball in dist/' \
 		'make srpm         Create a source RPM in dist/' \
 		'make rpm          Create akmod/meta RPMs and a source RPM in dist/' \
@@ -30,6 +32,12 @@ build:
 clean:
 	$(MAKE) -C module clean >/dev/null 2>&1 || true
 	rm -rf $(DIST_DIR) $(RPMBUILD_DIR)
+
+cleanup-stale-modules:
+	./scripts/cleanup-stale-modules.sh
+
+cleanup-stale-modules-apply:
+	./scripts/cleanup-stale-modules.sh --apply
 
 export-patch:
 	./scripts/export-patch.sh

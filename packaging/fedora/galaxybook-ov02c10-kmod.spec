@@ -3,6 +3,7 @@
 %global pkg_version %{?pkg_version_override}%{!?pkg_version_override:1.0.0}
 %global source_date_epoch_from_changelog 0
 %global clamp_mtime_to_source_date_epoch 1
+%{!?_depmoddir:%global _depmoddir %{_prefix}/lib/depmod.d}
 
 Name:           %{prjname}-kmod
 Version:        %{pkg_version}
@@ -20,7 +21,7 @@ BuildRequires:  gcc
 BuildRequires:  kmodtool
 BuildRequires:  make
 
-%{expand:%(kmodtool --target %{_target_cpu} --repo fedora --kmodname %{prjname} --akmod 2>/dev/null)}
+%{expand:%(kmodtool --target %{_target_cpu} --repo fedora --kmodname %{prjname} --akmod %{?kernels:--for-kernels "%{?kernels}"} 2>/dev/null)}
 
 %description
 This package carries the OV02C10 sensor driver aligned with the Intel IPU6
@@ -53,6 +54,8 @@ install -Dm0644 data/modules-load.d/galaxybook-ov02c10.conf \
   %{buildroot}%{_modulesloaddir}/galaxybook-ov02c10.conf
 install -Dm0644 data/modprobe.d/galaxybook-ov02c10.conf \
   %{buildroot}%{_modprobedir}/galaxybook-ov02c10.conf
+install -Dm0644 data/depmod.d/galaxybook-ov02c10.conf \
+  %{buildroot}%{_depmoddir}/galaxybook-ov02c10.conf
 
 for kernel_version in %{?kernel_versions}; do
   install -Dm755 _kmod_build_${kernel_version%%___*}/ov02c10.ko \
@@ -66,5 +69,6 @@ done
 %license %{_datadir}/licenses/%{name}/LICENSE
 %{_modulesloaddir}/galaxybook-ov02c10.conf
 %{_modprobedir}/galaxybook-ov02c10.conf
+%{_depmoddir}/galaxybook-ov02c10.conf
 
 %changelog
