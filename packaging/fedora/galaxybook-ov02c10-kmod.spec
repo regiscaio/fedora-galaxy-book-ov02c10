@@ -31,6 +31,7 @@ module stays in sync with the installed Intel IPU6 userspace and kernel stack.
 
 %package -n %{pkg_kmod_name}-common
 Summary:        Common files for the %{prjname} kernel module packaging
+Requires(posttrans): /usr/sbin/depmod
 
 %description -n %{pkg_kmod_name}-common
 Common documentation and licensing files for the %{prjname} kernel module
@@ -63,6 +64,16 @@ for kernel_version in %{?kernel_versions}; do
 done
 
 %{?akmod_install}
+
+%posttrans -n %{pkg_kmod_name}-common
+if command -v depmod >/dev/null 2>&1; then
+  for kernel_dir in /lib/modules/*; do
+    [ -d "${kernel_dir}/extra/%{prjname}" ] || continue
+    if find "${kernel_dir}/extra/%{prjname}" -type f \( -name 'ov02c10.ko' -o -name 'ov02c10.ko.xz' -o -name 'ov02c10.ko.zst' \) -print -quit | grep -q .; then
+      depmod -a "${kernel_dir##*/}" || :
+    fi
+  done
+fi
 
 %files -n %{pkg_kmod_name}-common
 %{_datadir}/doc/%{pkg_kmod_name}/README.md

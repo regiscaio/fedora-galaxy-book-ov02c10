@@ -148,6 +148,9 @@ The common package also installs three important configurations:
 
 That avoids a state where the fixed module exists on disk but `depmod` still
 points `ov02c10` to the kernel's in-tree driver.
+When that rule changes, the common package reruns `depmod` for kernels that
+already have an `extra/galaxybook-ov02c10` payload, avoiding a stale index on
+the next boot.
 
 If you need to force a module rebuild, use:
 

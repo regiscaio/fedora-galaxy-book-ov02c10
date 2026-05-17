@@ -146,6 +146,9 @@ O pacote comum também instala três configurações importantes:
 
 Isso evita um estado em que o modulo corrigido existe em disco, mas o
 `depmod` continua apontando `ov02c10` para o driver in-tree do kernel.
+Ao atualizar a regra, o pacote comum reexecuta `depmod` para os kernels que já
+possuem payload `extra/galaxybook-ov02c10`, evitando que o próximo boot continue
+usando um índice antigo.
 
 Se for necessário forçar a recompilação do módulo, use:
 
