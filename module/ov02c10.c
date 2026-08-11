@@ -9,6 +9,7 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/stddef.h>
 #include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 #include <asm/unaligned.h>
@@ -32,7 +33,6 @@ static const struct acpi_device_id cvfd_ids[] = {
 #endif
 
 #define OV02C10_LINK_FREQ_400MHZ	400000000ULL
-#define OV02C10_SCLK			80000000LL
 #define OV02C10_MCLK			19200000
 #define OV02C10_DATA_LANES		1
 #define OV02C10_RGB_DEPTH		10
@@ -682,7 +682,7 @@ static const struct ov02c10_mode supported_modes[] = {
 	{
 		.width = 1928,
 		.height = 1092,
-		.hts = 1140,
+		.hts = 2280,
 		.vts_def = 2328,
 		.vts_min = 2328,
 		.mipi_lanes = 2,
@@ -693,6 +693,13 @@ static const struct ov02c10_mode supported_modes[] = {
 		.link_freq_index = OV02C10_LINK_FREQ_400MHZ_INDEX,
 	},
 };
+
+static s64 ov02c10_get_pixel_rate(const struct ov02c10_mode *mode)
+{
+	/* CSI-2 lanes use DDR; convert the aggregate link rate to pixels/s. */
+	return link_freq_menu_items[mode->link_freq_index] * 2 *
+	       mode->mipi_lanes / OV02C10_RGB_DEPTH;
+}
 
 struct ov02c10 {
 	struct v4l2_subdev sd;
@@ -896,9 +903,11 @@ static bool ov02c10_needs_rotate_quirk(const struct ov02c10 *ov02c10);
 
 static int ov02c10_init_controls(struct ov02c10 *ov02c10)
 {
+	struct i2c_client *client = v4l2_get_subdevdata(&ov02c10->sd);
 	struct v4l2_ctrl_handler *ctrl_hdlr;
+	struct v4l2_fwnode_device_properties props;
 	const struct ov02c10_mode *cur_mode;
-	s64 exposure_max, h_blank;
+	s64 exposure_max, h_blank, pixel_rate;
 	u32 vblank_min, vblank_max, vblank_default;
 	int size;
 	int ret = 0;
@@ -906,9 +915,9 @@ static int ov02c10_init_controls(struct ov02c10 *ov02c10)
 	ctrl_hdlr = &ov02c10->ctrl_handler;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0) && \
 IS_ENABLED(CONFIG_INTEL_VSC)
-	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 9);
+	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 11);
 #else
-	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 8);
+	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 10);
 #endif
 	if (ret)
 		return ret;
@@ -925,9 +934,10 @@ IS_ENABLED(CONFIG_INTEL_VSC)
 	if (ov02c10->link_freq)
 		ov02c10->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
+	pixel_rate = ov02c10_get_pixel_rate(cur_mode);
 	ov02c10->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &ov02c10_ctrl_ops,
 						V4L2_CID_PIXEL_RATE, 0,
-						OV02C10_SCLK, 1, OV02C10_SCLK);
+						pixel_rate, 1, pixel_rate);
 
 	vblank_min = cur_mode->vts_min - cur_mode->height;
 	vblank_max = OV02C10_VTS_MAX - cur_mode->height;
@@ -967,6 +977,16 @@ IS_ENABLED(CONFIG_INTEL_VSC)
 				     V4L2_CID_TEST_PATTERN,
 				     ARRAY_SIZE(ov02c10_test_pattern_menu) - 1,
 				     0, 0, ov02c10_test_pattern_menu);
+
+	ret = v4l2_fwnode_device_parse(&client->dev, &props);
+	if (ret)
+		return ret;
+
+	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &ov02c10_ctrl_ops,
+					       &props);
+	if (ret)
+		return ret;
+
 	if (ctrl_hdlr->error)
 		return ctrl_hdlr->error;
 
@@ -1338,7 +1358,8 @@ static int ov02c10_set_format(struct v4l2_subdev *sd,
 	} else {
 		ov02c10->cur_mode = mode;
 		__v4l2_ctrl_s_ctrl(ov02c10->link_freq, mode->link_freq_index);
-		__v4l2_ctrl_s_ctrl_int64(ov02c10->pixel_rate, OV02C10_SCLK);
+		__v4l2_ctrl_s_ctrl_int64(ov02c10->pixel_rate,
+					   ov02c10_get_pixel_rate(mode));
 
 		/* Update limits and set FPS to default */
 		vblank_def = mode->vts_def - mode->height;
@@ -1522,45 +1543,59 @@ static bool ov02c10_needs_rotate_quirk(const struct ov02c10 *ov02c10)
 	}
 }
 
-static void ov02c10_read_mipi_lanes(struct ov02c10 *ov02c10)
+static int ov02c10_read_mipi_lanes(struct ov02c10 *ov02c10, u8 *mipi_lanes)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&ov02c10->sd);
-	struct mipi_camera_link_ssdb ssdb;
+	struct mipi_camera_link_ssdb ssdb = {};
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct acpi_device *adev = ACPI_COMPANION(&client->dev);
 	union acpi_object *obj;
 	acpi_status status;
 
 	if (!adev) {
-		dev_info(&client->dev, "Not ACPI device\n");
-		return;
+		dev_dbg(&client->dev, "not an ACPI device\n");
+		return -ENODEV;
 	}
 	status = acpi_evaluate_object(adev->handle, "SSDB", NULL, &buffer);
 	if (ACPI_FAILURE(status)) {
-		dev_info(&client->dev, "ACPI fail: %d\n", -ENODEV);
-		return;
+		dev_dbg(&client->dev, "SSDB is not available\n");
+		return -ENODEV;
 	}
 
 	obj = buffer.pointer;
 	if (!obj) {
-		dev_info(&client->dev, "Couldn't locate ACPI buffer\n");
-		return;
+		dev_err(&client->dev, "couldn't locate ACPI SSDB buffer\n");
+		status = AE_ERROR;
+		goto out_free_buff;
 	}
 
 	if (obj->type != ACPI_TYPE_BUFFER) {
-		dev_info(&client->dev, "Not an ACPI buffer\n");
+		dev_err(&client->dev, "SSDB is not an ACPI buffer\n");
+		status = AE_TYPE;
 		goto out_free_buff;
 	}
 
-	if (obj->buffer.length > sizeof(ssdb)) {
-		dev_err(&client->dev, "Given buffer is too small\n");
+	if (obj->buffer.length < offsetofend(struct mipi_camera_link_ssdb,
+						      lanes)) {
+		dev_err(&client->dev, "SSDB buffer is too short for lane data\n");
+		status = AE_AML_BUFFER_LIMIT;
 		goto out_free_buff;
 	}
-	memcpy(&ssdb, obj->buffer.pointer, obj->buffer.length);
-	ov02c10->mipi_lanes = ssdb.lanes;
+	memcpy(&ssdb, obj->buffer.pointer,
+	       min_t(size_t, obj->buffer.length, sizeof(ssdb)));
+	if (ssdb.lanes != 1 && ssdb.lanes != 2) {
+		dev_err(&client->dev, "invalid lane count %u in SSDB\n", ssdb.lanes);
+		status = AE_BAD_DATA;
+		goto out_free_buff;
+	}
+
+	*mipi_lanes = ssdb.lanes;
+	status = AE_OK;
 
 out_free_buff:
 	kfree(buffer.pointer);
+
+	return ACPI_SUCCESS(status) ? 0 : -EINVAL;
 }
 
 static int ov02c10_identify_module(struct ov02c10 *ov02c10)
@@ -1582,7 +1617,7 @@ static int ov02c10_identify_module(struct ov02c10 *ov02c10)
 	return 0;
 }
 
-static int ov02c10_check_hwcfg(struct device *dev)
+static int ov02c10_check_hwcfg(struct device *dev, u8 *mipi_lanes)
 {
 	struct v4l2_fwnode_endpoint bus_cfg = {
 		.bus_type = V4L2_MBUS_CSI2_DPHY
@@ -1598,19 +1633,31 @@ static int ov02c10_check_hwcfg(struct device *dev)
 
 	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
 	if (!ep)
-		return -EPROBE_DEFER;
+		return dev_err_probe(dev, -EPROBE_DEFER,
+				     "waiting for fwnode graph endpoint\n");
 
 	ret = fwnode_property_read_u32(dev_fwnode(dev), "clock-frequency",
 				       &ext_clk);
 	if (ret) {
-		dev_err(dev, "can't get clock frequency");
+		fwnode_handle_put(ep);
+		dev_err_probe(dev, ret, "can't get clock frequency\n");
 		return ret;
 	}
+	dev_dbg(dev, "firmware external clock: %u Hz\n", ext_clk);
 
 	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
 	fwnode_handle_put(ep);
 	if (ret)
-		return ret;
+		return dev_err_probe(dev, ret, "parsing endpoint failed\n");
+
+	if (bus_cfg.bus.mipi_csi2.num_data_lanes != 1 &&
+	    bus_cfg.bus.mipi_csi2.num_data_lanes != 2) {
+		ret = dev_err_probe(dev, -EINVAL,
+				    "number of CSI-2 data lanes %u is not supported\n",
+				    bus_cfg.bus.mipi_csi2.num_data_lanes);
+		goto out_err;
+	}
+	*mipi_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
 
 	if (!bus_cfg.nr_of_link_frequencies) {
 		dev_err(dev, "no link frequencies defined");
@@ -1692,21 +1739,24 @@ static int ov02c10_read_module_name(struct ov02c10 *ov02c10)
 static int ov02c10_probe(struct i2c_client *client)
 {
 	struct ov02c10 *ov02c10;
+	u8 ssdb_mipi_lanes;
+	u8 mipi_lanes;
 	int ret = 0;
 
 	/* Check HW config */
-	ret = ov02c10_check_hwcfg(&client->dev);
-	if (ret) {
-		dev_err(&client->dev, "failed to check hwcfg: %d", ret);
+	ret = ov02c10_check_hwcfg(&client->dev, &mipi_lanes);
+	if (ret)
 		return ret;
-	}
 
 	ov02c10 = devm_kzalloc(&client->dev, sizeof(*ov02c10), GFP_KERNEL);
 	if (!ov02c10)
 		return -ENOMEM;
 
 	v4l2_i2c_subdev_init(&ov02c10->sd, client, &ov02c10_subdev_ops);
-	ov02c10_get_pm_resources(&client->dev);
+	ov02c10->mipi_lanes = mipi_lanes;
+	ret = ov02c10_get_pm_resources(&client->dev);
+	if (ret)
+		return ret;
 
 	ret = ov02c10_power_on(&client->dev);
 	if (ret) {
@@ -1721,7 +1771,11 @@ static int ov02c10_probe(struct i2c_client *client)
 	}
 
 	ov02c10_read_module_name(ov02c10);
-	ov02c10_read_mipi_lanes(ov02c10);
+	ret = ov02c10_read_mipi_lanes(ov02c10, &ssdb_mipi_lanes);
+	if (!ret && ssdb_mipi_lanes != ov02c10->mipi_lanes)
+		dev_warn(&client->dev,
+			 "endpoint reports %u lanes but SSDB reports %u; using endpoint\n",
+			 ov02c10->mipi_lanes, ssdb_mipi_lanes);
 	mutex_init(&ov02c10->mutex);
 	ov02c10->cur_mode = &supported_modes[0];
 	if (ov02c10->mipi_lanes == 2)
