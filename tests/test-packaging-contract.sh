@@ -83,10 +83,50 @@ rg -Fq 'cleanup_command="${script_dir}/cleanup-stale-modules"' \
 	scripts/finalize-kernel.sh || fail "finalizer does not use the installed cleanup helper name"
 rg -Fq '/usr/libexec/galaxybook-ov02c10/state-directory.sh' "$expanded_spec" || \
 	fail "expanded package lost the shared state-directory validator"
+rg -Fq '/usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh' "$expanded_spec" || \
+	fail "expanded package lost the global kmod lifecycle lock helper"
+if rg -q 'GALAXYBOOK_KMOD_LIFECYCLE_LOCK_PATH|\$\{[^}]*KMOD_LIFECYCLE[^}]*PATH' \
+	scripts/kmod-lifecycle-lock.sh
+then
+	fail "global kmod lifecycle path became environment-overridable"
+fi
+rg -Fq 'kmod_lifecycle_lock_path="/run/lock/galaxybook-kmod-lifecycle.lock"' \
+	scripts/kmod-lifecycle-lock.sh || fail "global kmod lifecycle path changed"
+rg -Fq 'kmod_lifecycle_lock_timeout_seconds="600"' \
+	scripts/kmod-lifecycle-lock.sh || fail "global kmod lifecycle timeout changed"
+if rg -qi 'ov02c10|max98390|galaxybook-setup' scripts/kmod-lifecycle-lock.sh; then
+	fail "global kmod lifecycle helper contains a project-specific name"
+fi
 for state_consumer in scripts/queue-finalization.sh scripts/finalize-pending.sh; do
 	rg -Fq 'source "${script_dir}/state-directory.sh"' "$state_consumer" || \
 		fail "${state_consumer} does not source the installed state validator"
 done
+for mutating_consumer in \
+	scripts/finalize-pending.sh \
+	scripts/finalize-kernel.sh \
+	scripts/cleanup-stale-modules.sh \
+	scripts/migrate-legacy-config.sh
+do
+	rg -Fq 'source "${script_dir}/kmod-lifecycle-lock.sh"' "$mutating_consumer" || \
+		fail "${mutating_consumer} does not source the global lifecycle lock"
+done
+if rg -q 'kmod-lifecycle-lock|acquire_kmod_lifecycle_lock' \
+	scripts/queue-finalization.sh
+then
+	fail "in-transaction queue trigger must not take the global lifecycle lock"
+fi
+rg -q 'run_pending_lifecycle\(\).*acquire_kmod_lifecycle_lock.*acquire_lifecycle_lock.*acquire_rpm_read_lock.*process_pending' \
+	< <(tr '\n' ' ' < scripts/finalize-pending.sh) || \
+	fail "pending worker lost global-private-RPM lock ordering"
+rg -q 'reconcile_kernel\(\).*acquire_kmod_lifecycle_lock.*acquire_lifecycle_lock.*acquire_rpm_read_lock.*validate_replacement.*"\$migrate_command".*"\$cleanup_command".*finalize_kernel' \
+	< <(tr '\n' ' ' < scripts/finalize-kernel.sh) || \
+	fail "public finalizer lost global-private-RPM lifecycle ordering"
+rg -q '"\$apply" -eq 1.*acquire_kmod_lifecycle_lock.*acquire_lifecycle_lock.*acquire_rpm_read_lock' \
+	< <(tr '\n' ' ' < scripts/cleanup-stale-modules.sh) || \
+	fail "cleanup --apply lost global-private-RPM lock ordering"
+rg -q '"\$dry_run" -ne 1.*acquire_kmod_lifecycle_lock.*acquire_lifecycle_lock.*acquire_rpm_read_lock' \
+	< <(tr '\n' ' ' < scripts/migrate-legacy-config.sh) || \
+	fail "non-dry migration lost global-private-RPM lock ordering"
 rg -q 'validate_replacement.*"\$migrate_command".*"\$cleanup_command".*finalize_kernel' < <(
 	tr '\n' ' ' < scripts/finalize-kernel.sh
 ) || fail "public finalizer lost validate-before-mutation lifecycle ordering"
@@ -130,8 +170,13 @@ rg -Fq '/var/lib/galaxybook-ov02c10/ready/<kernel>.state' README.md || \
 for readme in README.md README.en.md README.es.md README.it.md; do
 	rg -Fq 'transfiletriggerpostun' "$readme" || \
 		fail "${readme} does not document the safe uninstall limitation"
-	rg -Fq 'dracut --force --kver "$kernel"' "$readme" || \
+	rg -Fq '/usr/bin/dracut --force --kver "$1"' "$readme" || \
 		fail "${readme} does not provide the safe initramfs rebuild command"
+	rg -Fq 'source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh' \
+		"$readme" || fail "${readme} uninstall guidance bypasses the global lock"
+	rg -q "sudo /usr/bin/bash -c '.*set -euo pipefail.*source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh.*acquire_kmod_lifecycle_lock.*dnf remove.*depmod -a.*dracut --force" \
+		< <(tr '\n' ' ' < "$readme") || \
+		fail "${readme} uninstall guidance is not fail-closed"
 done
 
 if rg -q 'data/modules-load.d/galaxybook-ov02c10.conf' \

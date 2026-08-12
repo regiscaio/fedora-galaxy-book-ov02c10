@@ -17,12 +17,20 @@ fake_unowned_rpm() {
 	return 1
 }
 
-acquire_rpm_read_lock() {
-	return 0
+lock_order=()
+acquire_kmod_lifecycle_lock() {
+	[[ "${#lock_order[@]}" -eq 0 ]]
+	lock_order+=(global)
 }
 
 acquire_lifecycle_lock() {
-	return 0
+	[[ "${lock_order[*]}" == "global" ]]
+	lock_order+=(private)
+}
+
+acquire_rpm_read_lock() {
+	[[ "${lock_order[*]}" == "global private" ]]
+	lock_order+=(rpm)
 }
 
 rpm_command=fake_unowned_rpm
@@ -32,9 +40,30 @@ printf '# Prefer the packaged Galaxy Book OV02C10 module over Fedora\x27s in-tre
 	> "${etc_root}/depmod.d/galaxybook-ov02c10.conf"
 
 main --etc-root "$etc_root"
+[[ "${lock_order[*]}" == "global private rpm" ]]
 [[ ! -e "${etc_root}/modules-load.d/galaxybook-ov02c10.conf" ]]
 [[ ! -e "${etc_root}/modprobe.d/galaxybook-ov02c10.conf" ]]
 [[ ! -e "${etc_root}/depmod.d/galaxybook-ov02c10.conf" ]]
+
+printf 'ov02c10\n' > "${etc_root}/modules-load.d/galaxybook-ov02c10.conf"
+acquire_kmod_lifecycle_lock() { return 1; }
+acquire_lifecycle_lock() {
+	printf 'private lock called after global-lock failure\n' >&2
+	return 1
+}
+acquire_rpm_read_lock() {
+	printf 'RPM lock called after global-lock failure\n' >&2
+	return 1
+}
+if main --etc-root "$etc_root" >/dev/null 2>&1; then
+	printf 'migration ignored a global lifecycle lock failure\n' >&2
+	exit 1
+fi
+[[ -e "${etc_root}/modules-load.d/galaxybook-ov02c10.conf" ]]
+
+acquire_kmod_lifecycle_lock() { return 0; }
+acquire_lifecycle_lock() { return 0; }
+acquire_rpm_read_lock() { return 0; }
 
 printf '# local policy\noverride ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' \
 	> "${etc_root}/depmod.d/galaxybook-ov02c10.conf"

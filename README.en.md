@@ -70,6 +70,8 @@ The repository separates three layers clearly:
   copy;
 - `scripts/finalize-kernel.sh`: same-kernel `depmod` and initramfs finalization
   after validating RPM ownership, vermagic, and the external payload;
+- `scripts/kmod-lifecycle-lock.sh`: authenticated global mutex that serializes
+  module maintenance across Galaxy Book drivers;
 - `scripts/migrate-legacy-config.sh`: conservative removal of old `/etc`
   shadows only when their bytes exactly match project-generated content;
 - `scripts/cleanup-stale-modules.sh`: detection and guarded cleanup of old
@@ -172,21 +174,26 @@ An RPM `transfiletrigger` reacts when the real kmod is installed, including
 when that happens in a later transaction started by `akmods`, but never queries
 the RPM database from inside that transaction. It validates the exact regular
 path, module name, and vermagic, records a durable request, and starts a
-systemd worker outside the transaction. Under an exclusive lifecycle lock and
-an RPM 6-compatible read lock, the worker migrates legacy files and requires
-exactly one payload owned by `kmod-galaxybook-ov02c10-<kernel>` with matching
-vermagic. Only then does it run `depmod`, require `modinfo` to resolve that same
-payload, rebuild the initramfs, and use `lsinitrd` to reject any in-tree copy.
-The worker inhibits shutdown/sleep for the full lifecycle, waits for
-`akmods.service`, retries through a path unit and timer, and preserves its
-queue after failure or an installation inside a chroot.
+systemd worker outside the transaction. The worker acquires, in order, the
+cross-driver global mutex, the OV02C10-private exclusive lifecycle lock, and an
+RPM 6-compatible read lock. While holding all three, it migrates legacy files
+and requires exactly one payload owned by
+`kmod-galaxybook-ov02c10-<kernel>` with matching vermagic. Only then does it
+run `depmod`, require `modinfo` to resolve that same payload, rebuild the
+initramfs, use `lsinitrd` to reject any in-tree copy, publish the ready state,
+and acknowledge the queued request. OV02C10 therefore cannot alter indexes or
+initramfs images in parallel with another driver that follows the same
+contract. The worker
+inhibits shutdown/sleep for the full lifecycle, waits for `akmods.service`,
+retries through a path unit and timer, and preserves its queue after failure or
+an installation inside a chroot.
 
 A common-package-only update keeps migration queued and preserves the legacy
 load configuration until a kernel request proves a valid replacement. The
-worker waits up to 600 seconds for an existing RPM transaction. Once it owns
-the read lock, it blocks new RPM writes until `dracut` completes; during that
-short window DNF5 can fail immediately instead of waiting. Wait for the worker
-and retry the DNF operation in that case.
+worker waits up to 600 seconds for both the global mutex and an existing RPM
+transaction. Once it owns the read lock, it blocks new RPM writes until
+`dracut` completes; during that short window DNF5 can fail immediately instead
+of waiting. Wait for the worker and retry the DNF operation in that case.
 
 After verification, the same lifecycle atomically publishes a root-owned
 `/var/lib/galaxybook-ov02c10/ready/<kernel>.state` attestation containing
@@ -230,13 +237,20 @@ initramfs explicitly:
 
 ```bash
 kernel="<exact-kernel-release>"
-sudo dnf remove "kmod-galaxybook-ov02c10-$kernel"
-sudo depmod -a "$kernel"
-sudo dracut --force --kver "$kernel"
+sudo /usr/bin/bash -c '
+  set -euo pipefail
+  source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh
+  acquire_kmod_lifecycle_lock
+  /usr/bin/dnf remove "kmod-galaxybook-ov02c10-$1"
+  /usr/bin/depmod -a "$1"
+  /usr/bin/dracut --force --kver "$1"
+' bash "$kernel"
 ```
 
 Use `lsinitrd --kver "$kernel"` to confirm that the external
 `extra/galaxybook-ov02c10` path is absent before the next boot.
+This procedure holds the same global mutex from RPM removal through the
+rebuild, preventing a race with another driver's maintenance.
 
 ### Validation after installation
 

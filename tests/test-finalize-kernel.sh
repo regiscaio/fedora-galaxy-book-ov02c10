@@ -98,12 +98,20 @@ assert_legacy_preserved() {
 	[[ -f "$legacy_module" && "$(<"$legacy_module")" == "stale module" ]]
 }
 
-acquire_rpm_read_lock() {
-	return 0
+lock_order=()
+acquire_kmod_lifecycle_lock() {
+	[[ "${#lock_order[@]}" -eq 0 ]]
+	lock_order+=(global)
 }
 
 acquire_lifecycle_lock() {
-	return 0
+	[[ "${lock_order[*]}" == "global" ]]
+	lock_order+=(private)
+}
+
+acquire_rpm_read_lock() {
+	[[ "${lock_order[*]}" == "global private" ]]
+	lock_order+=(rpm)
 }
 
 depmod_command=fake_depmod
@@ -121,11 +129,35 @@ publish_readiness_attestation() {
 }
 
 reconcile_kernel "$kernel"
+[[ "${lock_order[*]}" == "global private rpm" ]]
 [[ "$migrate_calls" -eq 1 ]]
 [[ "${cleanup_args[*]}" == "--apply --kernel ${kernel}" ]]
 [[ "${depmod_args[*]}" == "-a ${kernel}" ]]
 [[ "${dracut_args[*]}" == "--force --kver ${kernel} --add-drivers ov02c10" ]]
 [[ "$attestation_calls" -eq 1 ]]
+
+acquire_kmod_lifecycle_lock() {
+	return 1
+}
+acquire_lifecycle_lock() {
+	printf 'private lock called after global-lock failure\n' >&2
+	return 1
+}
+acquire_rpm_read_lock() {
+	printf 'RPM lock called after global-lock failure\n' >&2
+	return 1
+}
+if reconcile_kernel "$kernel" >/dev/null 2>&1; then
+	printf 'finalize-kernel ignored a global lifecycle lock failure\n' >&2
+	exit 1
+fi
+[[ "$migrate_calls" -eq 1 && "${#cleanup_args[@]}" -eq 3 ]]
+[[ "${depmod_args[*]}" == "-a ${kernel}" ]]
+[[ "$attestation_calls" -eq 1 ]]
+
+acquire_kmod_lifecycle_lock() { return 0; }
+acquire_lifecycle_lock() { return 0; }
+acquire_rpm_read_lock() { return 0; }
 
 fake_lsinitrd_mode="fail"
 if finalize_kernel "$kernel" >/dev/null 2>&1; then

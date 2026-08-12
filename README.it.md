@@ -69,6 +69,8 @@ Il repository separa chiaramente tre livelli:
   rispetto alla copia in-tree di Fedora;
 - `scripts/finalize-kernel.sh`: finalizzazione di `depmod` e initramfs per lo
   stesso kernel dopo aver validato owner RPM, vermagic e payload esterno;
+- `scripts/kmod-lifecycle-lock.sh`: mutex globale autenticato che serializza la
+  manutenzione dei moduli tra i driver Galaxy Book;
 - `scripts/migrate-legacy-config.sh`: rimozione conservativa dei vecchi shadow
   in `/etc` solo quando i byte corrispondono esattamente a contenuti generati
   dal progetto;
@@ -177,21 +179,26 @@ Un `transfiletrigger` RPM reagisce quando viene installato il kmod reale, anche
 se ciò avviene in una transazione successiva avviata da `akmods`, ma non
 interroga mai il database RPM dentro la transazione. Convalida il percorso
 regolare esatto, nome e vermagic, registra una richiesta durevole e avvia un
-worker systemd fuori transazione. Con un lock esclusivo del ciclo e un read
-lock compatibile con RPM 6, il worker migra i legacy e richiede esattamente un
-payload appartenente a `kmod-galaxybook-ov02c10-<kernel>` con vermagic
-corretto. Solo allora esegue `depmod`, richiede che `modinfo` risolva lo stesso
-payload, ricostruisce l'initramfs e usa `lsinitrd` per rifiutare copie in-tree.
-Il worker inibisce spegnimento/sospensione, attende `akmods.service`, ritenta
-con una path unit e un timer e conserva la coda dopo errori o installazioni in
-chroot.
+worker systemd fuori transazione. Il worker acquisisce, nell'ordine, il mutex
+globale cross-driver, il lock esclusivo privato di OV02C10 e il read lock
+compatibile con RPM 6. Mantenendo tutti e tre, migra i legacy e richiede
+esattamente un payload appartenente a
+`kmod-galaxybook-ov02c10-<kernel>` con vermagic corretto. Solo allora esegue
+`depmod`, richiede che `modinfo` risolva lo stesso payload, ricostruisce
+l'initramfs, usa `lsinitrd` per rifiutare copie in-tree, pubblica lo stato
+pronto e conferma la richiesta in coda. OV02C10 non può quindi modificare
+indici o initramfs in parallelo con un altro driver che adotta lo stesso
+contratto. Il worker inibisce
+spegnimento/sospensione, attende `akmods.service`, ritenta con una path unit e
+un timer e conserva la coda dopo errori o installazioni in chroot.
 
 Un aggiornamento del solo pacchetto common mantiene la migrazione in coda e la
 configurazione legacy di caricamento finché una richiesta kernel non dimostra
-un replacement valido. Il worker attende fino a 600 secondi una transazione
-RPM esistente. Dopo aver acquisito il read lock blocca nuove scritture RPM fino
-al termine di `dracut`; in questa breve finestra DNF5 può fallire subito invece
-di attendere. In tal caso attendi il worker e ripeti l'operazione DNF.
+un replacement valido. Il worker attende fino a 600 secondi sia il mutex
+globale sia una transazione RPM esistente. Dopo aver acquisito il read lock
+blocca nuove scritture RPM fino al termine di `dracut`; in questa breve
+finestra DNF5 può fallire subito invece di attendere. In tal caso attendi il
+worker e ripeti l'operazione DNF.
 
 Pubblica poi atomicamente l'attestazione root-owned
 `/var/lib/galaxybook-ov02c10/ready/<kernel>.state` con fingerprint del modulo e
@@ -236,13 +243,20 @@ quel kernel:
 
 ```bash
 kernel="<release-esatta-del-kernel>"
-sudo dnf remove "kmod-galaxybook-ov02c10-$kernel"
-sudo depmod -a "$kernel"
-sudo dracut --force --kver "$kernel"
+sudo /usr/bin/bash -c '
+  set -euo pipefail
+  source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh
+  acquire_kmod_lifecycle_lock
+  /usr/bin/dnf remove "kmod-galaxybook-ov02c10-$1"
+  /usr/bin/depmod -a "$1"
+  /usr/bin/dracut --force --kver "$1"
+' bash "$kernel"
 ```
 
 Conferma con `lsinitrd --kver "$kernel"` che il percorso esterno
 `extra/galaxybook-ov02c10` sia assente prima del prossimo boot.
+Questa procedura mantiene lo stesso mutex globale dalla rimozione RPM fino
+alla ricostruzione ed evita una race con la manutenzione di un altro driver.
 
 ### Verifica dopo l'installazione
 

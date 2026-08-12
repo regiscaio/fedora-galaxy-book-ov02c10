@@ -136,18 +136,41 @@ fi
 [[ -e "${pending_dir}/${kernel}.pending" ]]
 
 lock_order=()
+acquire_kmod_lifecycle_lock() {
+	lock_order+=(global)
+}
 acquire_lifecycle_lock() {
+	[[ "${lock_order[*]}" == "global" ]]
 	lock_order+=(lifecycle)
 }
 acquire_rpm_read_lock() {
-	[[ "${lock_order[*]}" == "lifecycle" ]]
+	[[ "${lock_order[*]}" == "global lifecycle" ]]
 	lock_order+=(rpm)
 }
 process_pending() {
-	[[ "${lock_order[*]}" == "lifecycle rpm" ]]
+	[[ "${lock_order[*]}" == "global lifecycle rpm" ]]
 	lock_order+=(process)
 }
 run_pending_lifecycle
-[[ "${lock_order[*]}" == "lifecycle rpm process" ]]
+[[ "${lock_order[*]}" == "global lifecycle rpm process" ]]
+
+process_after_global_failure=0
+acquire_kmod_lifecycle_lock() { return 1; }
+acquire_lifecycle_lock() {
+	printf 'private lock called after global-lock failure\n' >&2
+	return 1
+}
+acquire_rpm_read_lock() {
+	printf 'RPM lock called after global-lock failure\n' >&2
+	return 1
+}
+process_pending() {
+	process_after_global_failure=1
+}
+if run_pending_lifecycle >/dev/null 2>&1; then
+	printf 'pending worker ignored a global lifecycle lock failure\n' >&2
+	exit 1
+fi
+[[ "$process_after_global_failure" -eq 0 ]]
 
 printf 'test-finalize-pending: ok\n'

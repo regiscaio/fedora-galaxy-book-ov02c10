@@ -11,6 +11,8 @@ stat_command="/usr/bin/stat"
 marker_version="GALAXYBOOK_OV02C10_FINALIZATION_V1"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=kmod-lifecycle-lock.sh
+source "${script_dir}/kmod-lifecycle-lock.sh"
 # shellcheck source=rpm-read-lock.sh
 source "${script_dir}/rpm-read-lock.sh"
 # shellcheck source=lifecycle-lock.sh
@@ -142,6 +144,7 @@ process_pending() {
 }
 
 run_pending_lifecycle() {
+	acquire_kmod_lifecycle_lock || return 1
 	acquire_lifecycle_lock || return 1
 	acquire_rpm_read_lock "$@" || return 1
 	process_pending

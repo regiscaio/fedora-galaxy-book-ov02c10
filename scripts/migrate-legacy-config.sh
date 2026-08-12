@@ -8,6 +8,8 @@ cmp_command="/usr/bin/cmp"
 rm_command="/usr/bin/rm"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=kmod-lifecycle-lock.sh
+source "${script_dir}/kmod-lifecycle-lock.sh"
 # shellcheck source=rpm-file-owner.sh
 source "${script_dir}/rpm-file-owner.sh"
 # shellcheck source=rpm-read-lock.sh
@@ -120,6 +122,7 @@ main() {
 		return 1
 	fi
 	if [[ "$dry_run" -ne 1 ]]; then
+		acquire_kmod_lifecycle_lock || return 1
 		acquire_lifecycle_lock || return 1
 		acquire_rpm_read_lock "$@" || return 1
 	fi

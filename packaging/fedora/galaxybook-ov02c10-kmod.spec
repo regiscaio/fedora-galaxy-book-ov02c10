@@ -79,6 +79,8 @@ install -Dm0644 scripts/rpm-file-owner.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/rpm-file-owner.sh
 install -Dm0644 scripts/rpm-read-lock.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/rpm-read-lock.sh
+install -Dm0644 scripts/kmod-lifecycle-lock.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/kmod-lifecycle-lock.sh
 install -Dm0644 scripts/lifecycle-lock.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/lifecycle-lock.sh
 install -Dm0644 scripts/state-directory.sh \
@@ -131,6 +133,7 @@ done
 %{_libexecdir}/%{prjname}/queue-finalization
 %{_libexecdir}/%{prjname}/rpm-file-owner.sh
 %{_libexecdir}/%{prjname}/rpm-read-lock.sh
+%{_libexecdir}/%{prjname}/kmod-lifecycle-lock.sh
 %{_libexecdir}/%{prjname}/lifecycle-lock.sh
 %{_libexecdir}/%{prjname}/state-directory.sh
 %{_unitdir}/galaxybook-ov02c10-finalize.path

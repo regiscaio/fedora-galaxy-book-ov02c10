@@ -21,6 +21,8 @@ ready_root="${state_root}/ready"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 migrate_command="${script_dir}/migrate-legacy-config"
 cleanup_command="${script_dir}/cleanup-stale-modules"
+# shellcheck source=kmod-lifecycle-lock.sh
+source "${script_dir}/kmod-lifecycle-lock.sh"
 # shellcheck source=rpm-file-owner.sh
 source "${script_dir}/rpm-file-owner.sh"
 # shellcheck source=rpm-read-lock.sh
@@ -33,11 +35,12 @@ usage() {
 Usage: finalize-kernel --kernel KERNEL
 
 Reconcile and finalize an installed Galaxy Book OV02C10 module for one kernel.
-Under one exclusive lifecycle lock and one shared RPM transaction lock, the
-command first validates RPM ownership, module name and vermagic, then migrates
-exact legacy configuration, cleans safe unowned module shadows, refreshes that
-kernel's dependency index, rebuilds the same kernel's initramfs, and verifies
-that it contains the external module rather than an in-tree copy.
+Under the cross-driver exclusive lock, this driver's exclusive lifecycle lock,
+and one shared RPM transaction lock, the command first validates RPM ownership,
+module name and vermagic, then migrates exact legacy configuration, cleans safe
+unowned module shadows, refreshes that kernel's dependency index, rebuilds the
+same kernel's initramfs, and verifies that it contains the external module
+rather than an in-tree copy.
 USAGE
 }
 
@@ -337,6 +340,7 @@ finalize_kernel() {
 reconcile_kernel() {
 	local kernel="$1"
 
+	acquire_kmod_lifecycle_lock || return 1
 	acquire_lifecycle_lock || return 1
 	acquire_rpm_read_lock --kernel "$kernel" || return 1
 	validated_replacement=""

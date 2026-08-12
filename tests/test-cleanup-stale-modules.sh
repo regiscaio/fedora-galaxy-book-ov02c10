@@ -5,12 +5,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../scripts/cleanup-stale-modules.sh
 source "${repo_root}/scripts/cleanup-stale-modules.sh"
 
-acquire_rpm_read_lock() {
-	return 0
+lock_order=()
+acquire_kmod_lifecycle_lock() {
+	lock_order=(global)
 }
 
 acquire_lifecycle_lock() {
-	return 0
+	[[ "${lock_order[*]}" == "global" ]]
+	lock_order+=(private)
+}
+
+acquire_rpm_read_lock() {
+	[[ "${lock_order[*]}" == "global private" ]]
+	lock_order+=(rpm)
 }
 
 test_root="$(mktemp -d /tmp/ov02c10-cleanup-test.XXXXXX)"
@@ -92,7 +99,24 @@ fi
 
 fake_vermagic_kernel="$kernel"
 main --apply --module-root "$test_root" --kernel "$kernel" >/dev/null
+[[ "${lock_order[*]}" == "global private rpm" ]]
 [[ ! -e "${test_root}/${kernel}/updates/ov02c10.ko.gz" ]]
 [[ -e "${replacement_dir}/ov02c10.ko.xz" ]]
+
+printf 'stale module\n' > "${test_root}/${kernel}/updates/ov02c10.ko.gz"
+acquire_kmod_lifecycle_lock() { return 1; }
+acquire_lifecycle_lock() {
+	printf 'private lock called after global-lock failure\n' >&2
+	return 1
+}
+acquire_rpm_read_lock() {
+	printf 'RPM lock called after global-lock failure\n' >&2
+	return 1
+}
+if main --apply --module-root "$test_root" --kernel "$kernel" >/dev/null 2>&1; then
+	printf 'cleanup-stale-modules ignored a global lifecycle lock failure\n' >&2
+	exit 1
+fi
+[[ -e "${test_root}/${kernel}/updates/ov02c10.ko.gz" ]]
 
 printf 'test-cleanup-stale-modules: ok\n'

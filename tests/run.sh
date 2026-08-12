@@ -8,6 +8,7 @@ for test_script in \
 	"${repo_root}/tests/test-readiness-attestation.sh" \
 	"${repo_root}/tests/test-queue-finalization.sh" \
 	"${repo_root}/tests/test-finalize-pending.sh" \
+	"${repo_root}/tests/test-kmod-lifecycle-lock.sh" \
 	"${repo_root}/tests/test-rpm-read-lock.sh" \
 	"${repo_root}/tests/test-lifecycle-lock.sh" \
 	"${repo_root}/tests/test-rpm6-locking.sh" \
