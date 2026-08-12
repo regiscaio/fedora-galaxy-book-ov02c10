@@ -19,8 +19,8 @@ state_root="/var/lib/galaxybook-ov02c10"
 ready_root="${state_root}/ready"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-migrate_command="${script_dir}/migrate-legacy-config.sh"
-cleanup_command="${script_dir}/cleanup-stale-modules.sh"
+migrate_command="${script_dir}/migrate-legacy-config"
+cleanup_command="${script_dir}/cleanup-stale-modules"
 # shellcheck source=rpm-file-owner.sh
 source "${script_dir}/rpm-file-owner.sh"
 # shellcheck source=rpm-read-lock.sh

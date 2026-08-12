@@ -77,6 +77,10 @@ rg -q 'v4l2_ctrl_new_fwnode_properties' module/ov02c10.c || \
 	fail "driver does not expose fwnode controls"
 rg -q -- '--add-drivers ov02c10' scripts/finalize-kernel.sh || \
 	fail "finalizer must add ov02c10 only after validating the external payload"
+rg -Fq 'migrate_command="${script_dir}/migrate-legacy-config"' \
+	scripts/finalize-kernel.sh || fail "finalizer does not use the installed migration helper name"
+rg -Fq 'cleanup_command="${script_dir}/cleanup-stale-modules"' \
+	scripts/finalize-kernel.sh || fail "finalizer does not use the installed cleanup helper name"
 rg -q 'validate_replacement.*"\$migrate_command".*"\$cleanup_command".*finalize_kernel' < <(
 	tr '\n' ' ' < scripts/finalize-kernel.sh
 ) || fail "public finalizer lost validate-before-mutation lifecycle ordering"
