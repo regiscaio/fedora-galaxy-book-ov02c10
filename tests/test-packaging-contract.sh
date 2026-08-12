@@ -115,6 +115,14 @@ rg -Fq '/var/lib/galaxybook-ov02c10/ready' "$expanded_spec" || \
 	fail "expanded package lost the readiness state directory"
 rg -Fq '/var/lib/galaxybook-ov02c10/pending' "$expanded_spec" || \
 	fail "expanded package lost the durable kernel queue"
+rg -Fq '/var/lib/galaxybook-ov02c10/ready/<kernel>.state' README.md || \
+	fail "Portuguese documentation lost the readiness attestation contract"
+for readme in README.md README.en.md README.es.md README.it.md; do
+	rg -Fq 'transfiletriggerpostun' "$readme" || \
+		fail "${readme} does not document the safe uninstall limitation"
+	rg -Fq 'dracut --force --kver "$kernel"' "$readme" || \
+		fail "${readme} does not provide the safe initramfs rebuild command"
+done
 
 if rg -q 'data/modules-load.d/galaxybook-ov02c10.conf' \
 	README.md README.en.md README.es.md README.it.md

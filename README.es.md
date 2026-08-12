@@ -64,7 +64,7 @@ El repositorio separa claramente tres capas:
   partir de la diferencia entre ambos archivos;
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` para pedir `ov02c10`
   antes de `intel_ipu6_isys`;
-- `data/depmod.d/galaxybook-ov02c10.conf`: override para priorizar el modulo
+- `data/depmod.d/galaxybook-ov02c10.conf`: override para priorizar el módulo
   empaquetado en `extra/galaxybook-ov02c10/drivers/media/i2c` sobre la copia
   in-tree de Fedora;
 - `scripts/finalize-kernel.sh`: finalización de `depmod` e initramfs para el
@@ -167,17 +167,34 @@ por dependencia exacta y hacer que `dnf` ignore la actualización del driver.
 El paquete común instala dos configuraciones importantes:
 
 - un `softdep` para preferir `ov02c10` antes de `intel_ipu6_isys`;
-- un override en `depmod.d` para priorizar el modulo empaquetado en
+- un override en `depmod.d` para priorizar el módulo empaquetado en
   `extra/galaxybook-ov02c10/drivers/media/i2c` sobre el driver in-tree de
   Fedora.
 
 Un `transfiletrigger` de RPM reacciona cuando se instala el kmod real, incluso
-si ocurre en una transacción posterior iniciada por `akmods`. Para cada kernel,
-el finalizador exige exactamente un payload perteneciente a
-`kmod-galaxybook-ov02c10-<kernel>` y con vermagic correspondiente. Solo entonces
-ejecuta `depmod`, confirma la resolución mediante `modinfo`, reconstruye el
-initramfs y usa `lsinitrd` para rechazar cualquier copia in-tree. Los errores no
-se ocultan.
+si ocurre en una transacción posterior iniciada por `akmods`, pero nunca
+consulta la base RPM dentro de esa transacción. Valida la ruta regular exacta,
+el nombre y el vermagic, registra una solicitud durable y activa un worker
+systemd fuera de la transacción. Bajo un lock exclusivo del ciclo y un read
+lock compatible con RPM 6, el worker migra los legados y exige exactamente un
+payload perteneciente a `kmod-galaxybook-ov02c10-<kernel>` con vermagic
+correcto. Solo entonces ejecuta `depmod`, exige que `modinfo` resuelva ese mismo
+payload, reconstruye el initramfs y usa `lsinitrd` para rechazar copias in-tree.
+El worker inhibe apagado/suspensión, espera `akmods.service`, reintenta mediante
+una unidad path y un timer, y conserva la cola tras fallos o instalaciones en
+chroot.
+
+Una actualización solo del paquete común conserva la migración en cola y la
+configuración legacy de carga hasta que una solicitud de kernel demuestre un
+replacement válido. El worker espera hasta 600 segundos una transacción RPM
+existente. Después de adquirir el read lock, bloquea nuevas escrituras RPM
+hasta terminar `dracut`; durante esa ventana breve DNF5 puede fallar de
+inmediato en vez de esperar. En ese caso, espera al worker y repite DNF.
+
+Después publica atómicamente la atestación root-owned
+`/var/lib/galaxybook-ov02c10/ready/<kernel>.state` con fingerprints del módulo
+y del initramfs. El setup solo la verifica y cualquier cambio posterior la
+invalida.
 
 El paquete también migra archivos legados en `/etc/modules-load.d`,
 `/etc/modprobe.d` y `/etc/depmod.d`. Solo elimina un archivo regular sin owner
@@ -192,9 +209,9 @@ sudo /usr/libexec/galaxybook-ov02c10/finalize-kernel --kernel "$(uname -r)"
 sudo reboot
 ```
 
-Si DNF, PackageKit o el registro de transaccion vuelve a mostrar avisos de
+Si DNF, PackageKit o el registro de transacción vuelve a mostrar avisos de
 `depmod` citando `/lib/modules/<kernel>/updates/ov02c10.ko`, busca copias
-legadas que no pertenezcan a ningun RPM:
+legadas que no pertenezcan a ningún RPM:
 
 ```bash
 make cleanup-stale-modules
@@ -207,6 +224,22 @@ El objetivo de limpieza solo considera overrides directos antiguos en
 un replacement externo, perteneciente al RPM esperado y con vermagic correcto.
 El módulo in-tree de Fedora y los módulos empaquetados por Intel IPU6 permanecen
 intactos.
+
+Limitación deliberada: quitar solo el kmod binario todavía no reconstruye el
+initramfs automáticamente. `transfiletriggerpostun` no entrega las rutas
+eliminadas y el paquete común que contiene el worker puede quitarse en la misma
+transacción; una cola parcial no sería segura. Antes de quitar el paquete
+común, elimina el kmod específico y reconstruye ese kernel explícitamente:
+
+```bash
+kernel="<versión-exacta-del-kernel>"
+sudo dnf remove "kmod-galaxybook-ov02c10-$kernel"
+sudo depmod -a "$kernel"
+sudo dracut --force --kver "$kernel"
+```
+
+Confirma con `lsinitrd --kver "$kernel"` que la ruta externa
+`extra/galaxybook-ov02c10` no permanezca antes del próximo arranque.
 
 ### Validación después de instalar
 

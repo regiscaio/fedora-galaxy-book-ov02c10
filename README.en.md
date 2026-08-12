@@ -169,11 +169,29 @@ The common package installs two important configurations:
   `extra/galaxybook-ov02c10/drivers/media/i2c` over Fedora's in-tree driver.
 
 An RPM `transfiletrigger` reacts when the real kmod is installed, including
-when that happens in a later transaction started by `akmods`. For each kernel,
-the finalizer requires exactly one payload owned by
-`kmod-galaxybook-ov02c10-<kernel>` with matching vermagic. Only then does it
-run `depmod`, confirm resolution through `modinfo`, rebuild the initramfs, and
-use `lsinitrd` to reject any in-tree copy. Failures are not hidden.
+when that happens in a later transaction started by `akmods`, but never queries
+the RPM database from inside that transaction. It validates the exact regular
+path, module name, and vermagic, records a durable request, and starts a
+systemd worker outside the transaction. Under an exclusive lifecycle lock and
+an RPM 6-compatible read lock, the worker migrates legacy files and requires
+exactly one payload owned by `kmod-galaxybook-ov02c10-<kernel>` with matching
+vermagic. Only then does it run `depmod`, require `modinfo` to resolve that same
+payload, rebuild the initramfs, and use `lsinitrd` to reject any in-tree copy.
+The worker inhibits shutdown/sleep for the full lifecycle, waits for
+`akmods.service`, retries through a path unit and timer, and preserves its
+queue after failure or an installation inside a chroot.
+
+A common-package-only update keeps migration queued and preserves the legacy
+load configuration until a kernel request proves a valid replacement. The
+worker waits up to 600 seconds for an existing RPM transaction. Once it owns
+the read lock, it blocks new RPM writes until `dracut` completes; during that
+short window DNF5 can fail immediately instead of waiting. Wait for the worker
+and retry the DNF operation in that case.
+
+After verification, the same lifecycle atomically publishes a root-owned
+`/var/lib/galaxybook-ov02c10/ready/<kernel>.state` attestation containing
+fingerprints of the module and initramfs. The setup only verifies it, and any
+later change to either file invalidates it.
 
 The package also migrates legacy files under `/etc/modules-load.d`,
 `/etc/modprobe.d`, and `/etc/depmod.d`. It removes an unowned regular file only
@@ -202,6 +220,23 @@ The cleanup target only considers old direct overrides in `updates/` or
 refuses removal unless the same kernel already has exactly one external
 replacement owned by the expected RPM and carrying the correct vermagic.
 Fedora's in-tree module and Intel IPU6-packaged modules are left untouched.
+
+Deliberate limitation: removing only the binary kmod does not yet rebuild its
+initramfs automatically. `transfiletriggerpostun` does not provide the removed
+paths, and the common package that owns the worker can be removed in the same
+transaction, so a partial queue would not be safe. Before removing the common
+package, remove the kernel-specific kmod and rebuild that exact kernel's
+initramfs explicitly:
+
+```bash
+kernel="<exact-kernel-release>"
+sudo dnf remove "kmod-galaxybook-ov02c10-$kernel"
+sudo depmod -a "$kernel"
+sudo dracut --force --kver "$kernel"
+```
+
+Use `lsinitrd --kver "$kernel"` to confirm that the external
+`extra/galaxybook-ov02c10` path is absent before the next boot.
 
 ### Validation after installation
 
