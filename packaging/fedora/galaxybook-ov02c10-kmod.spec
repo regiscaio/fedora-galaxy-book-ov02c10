@@ -33,6 +33,7 @@ module stays in sync with the installed Intel IPU6 userspace and kernel stack.
 Summary:        Common files for the %{prjname} kernel module packaging
 Requires:       bash
 Requires:       coreutils
+Requires:       diffutils
 Requires:       dracut
 Requires:       findutils
 Requires:       kmod

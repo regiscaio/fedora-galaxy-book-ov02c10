@@ -18,12 +18,17 @@ fake_unowned_rpm() {
 rpm_command=fake_unowned_rpm
 printf 'ov02c10\n' > "${etc_root}/modules-load.d/galaxybook-ov02c10.conf"
 printf 'softdep intel_ipu6_isys pre: ov02c10\n' > "${etc_root}/modprobe.d/galaxybook-ov02c10.conf"
-printf '# local policy\noverride ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' \
+printf '# Prefer the packaged Galaxy Book OV02C10 module over Fedora\x27s in-tree copy.\noverride ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' \
 	> "${etc_root}/depmod.d/galaxybook-ov02c10.conf"
 
 main --etc-root "$etc_root"
 [[ ! -e "${etc_root}/modules-load.d/galaxybook-ov02c10.conf" ]]
 [[ ! -e "${etc_root}/modprobe.d/galaxybook-ov02c10.conf" ]]
+[[ ! -e "${etc_root}/depmod.d/galaxybook-ov02c10.conf" ]]
+
+printf '# local policy\noverride ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' \
+	> "${etc_root}/depmod.d/galaxybook-ov02c10.conf"
+main --etc-root "$etc_root"
 [[ -e "${etc_root}/depmod.d/galaxybook-ov02c10.conf" ]]
 
 printf 'ov02c10\n' > "${etc_root}/modules-load.d/galaxybook-ov02c10.conf"
@@ -39,5 +44,6 @@ rpm_command=fake_owned_rpm
 dry_run=0
 main --etc-root "$etc_root"
 [[ -e "${etc_root}/modules-load.d/galaxybook-ov02c10.conf" ]]
+[[ -e "${etc_root}/depmod.d/galaxybook-ov02c10.conf" ]]
 
 printf 'test-migrate-legacy-config: ok\n'

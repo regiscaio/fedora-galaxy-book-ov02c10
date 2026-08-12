@@ -25,8 +25,10 @@ fail() {
 
 migrate_file() {
 	local relative_path="$1"
-	local expected_content="$2"
+	shift
+	local expected_content
 	local target="${etc_root}/${relative_path}"
+	local matches_generated_content=0
 
 	if [[ ! -e "$target" && ! -L "$target" ]]; then
 		return 0
@@ -42,7 +44,14 @@ migrate_file() {
 		return 0
 	fi
 
-	if ! "$cmp_command" -s -- "$target" <(printf '%s' "$expected_content"); then
+	for expected_content in "$@"; do
+		if "$cmp_command" -s -- "$target" <(printf '%s' "$expected_content"); then
+			matches_generated_content=1
+			break
+		fi
+	done
+
+	if [[ "$matches_generated_content" -ne 1 ]]; then
 		printf 'Preserving customized configuration: %s\n' "$target"
 		return 0
 	fi
@@ -100,7 +109,9 @@ main() {
 	migrate_file "modprobe.d/galaxybook-ov02c10.conf" \
 		$'softdep intel_ipu6_isys pre: ov02c10\n' || return 1
 	migrate_file "depmod.d/galaxybook-ov02c10.conf" \
-		$'override ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' || return 1
+		$'override ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' \
+		$'# Prefer the packaged Galaxy Book OV02C10 module over Fedora\'s in-tree copy.\noverride ov02c10 * extra/galaxybook-ov02c10/drivers/media/i2c\n' \
+		|| return 1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
