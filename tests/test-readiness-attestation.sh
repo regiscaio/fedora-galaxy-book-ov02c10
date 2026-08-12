@@ -26,9 +26,6 @@ mv_command=/usr/bin/mv
 rm_command=/usr/bin/rm
 chmod_command=/usr/bin/chmod
 chown_command=/usr/bin/chown
-trusted_root_directory() {
-	return 0
-}
 if [[ "$EUID" -ne 0 ]]; then
 	chown_command=/usr/bin/true
 	ensure_ready_directory() {
@@ -40,6 +37,18 @@ if [[ "$EUID" -ne 0 ]]; then
 		[[ -f "$marker" && ! -L "$marker" ]] || return 1
 		[[ "$(stat -Lc '%a:%h' -- "$marker")" == "644:1" ]]
 	}
+fi
+
+if [[ "$EUID" -eq 0 ]]; then
+	trusted_root_directory /var
+	trusted_root_directory /var/lib
+	unsafe_trusted_root="${test_root}/unsafe-trusted-root"
+	mkdir "$unsafe_trusted_root"
+	chmod 0775 "$unsafe_trusted_root"
+	if trusted_root_directory "$unsafe_trusted_root"; then
+		printf 'trusted root validation accepted a group-writable directory\n' >&2
+		exit 1
+	fi
 fi
 
 # Test scope substitutes the fixed /boot path while leaving production code on

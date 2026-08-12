@@ -94,7 +94,7 @@ trusted_root_directory() {
 	metadata="$("$stat_command" -Lc '%u:%g:%a' -- "$directory")" || return 1
 	[[ "$metadata" =~ ^0:0:([0-7]{3,4})$ ]] || return 1
 	mode="${BASH_REMATCH[1]}"
-	(( (8#${mode}) & 8#022 == 0 ))
+	(( (8#${mode} & 8#022) == 0 ))
 }
 
 ensure_ready_directory() {
