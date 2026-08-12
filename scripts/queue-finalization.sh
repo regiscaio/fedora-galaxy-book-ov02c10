@@ -42,7 +42,7 @@ validate_kernel_name() {
 
 ensure_state_directory() {
 	local pending_dir="${state_root}/pending"
-	local directory owner mode
+	local directory owner mode ancestry
 
 	for directory in "$state_root" "$pending_dir"; do
 		if [[ -L "$directory" ]]; then
@@ -51,10 +51,37 @@ ensure_state_directory() {
 		fi
 	done
 
-	"$install_command" -d -m 0755 -- "$state_root" "$pending_dir" || {
+	if [[ "$EUID" -eq 0 ]]; then
+		for ancestry in /var /var/lib; do
+			[[ -d "$ancestry" && ! -L "$ancestry" ]] || {
+				fail "state hierarchy is missing or unsafe: ${ancestry}"
+				return 1
+			}
+			owner="$("$stat_command" -c '%u:%g' -- "$ancestry")" || return 1
+			mode="$("$stat_command" -c '%a' -- "$ancestry")" || return 1
+			if [[ "$owner" != "0:0" ]] || (( (8#${mode}) & 8#022 )); then
+				fail "unsafe state hierarchy metadata on ${ancestry}: ${owner} mode ${mode}"
+				return 1
+			fi
+		done
+		"$install_command" -d -o root -g root -m 0755 -- \
+			"$state_root" "$pending_dir" || {
+			fail "could not create durable finalization state under ${state_root}"
+			return 1
+		}
+		"$chmod_command" 00755 -- "$state_root" "$pending_dir" || return 1
+	else
+		"$install_command" -d -m 0755 -- "$state_root" "$pending_dir" || {
+			fail "could not create durable finalization state under ${state_root}"
+			return 1
+		}
+	fi
+	if [[ ! -d "$state_root" || -L "$state_root" || \
+		! -d "$pending_dir" || -L "$pending_dir" ]]
+	then
 		fail "could not create durable finalization state under ${state_root}"
 		return 1
-	}
+	fi
 
 	if [[ "$EUID" -eq 0 ]]; then
 		for directory in "$state_root" "$pending_dir"; do

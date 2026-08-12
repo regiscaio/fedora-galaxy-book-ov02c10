@@ -90,7 +90,7 @@ run_release_case() {
 	local mode="$1"
 	local ready="${test_root}/${mode}.ready"
 	local release="${test_root}/${mode}.release"
-	local holder_pid attempt holder_status=0 blocked
+	local holder_pid attempt holder_status=0 blocked released=0
 
 	(
 		# shellcheck source=../scripts/rpm-read-lock.sh
@@ -131,6 +131,18 @@ run_release_case() {
 		signal) (( holder_status > 128 )) ;;
 	esac
 	[[ ! -s "${test_root}/${mode}-holder.err" ]]
+	# A signal can arrive while bash is waiting for the short-lived sleep child
+	# above. That child legitimately retains the inherited open-file
+	# description until it exits. Prove that the complete command tree drains
+	# and releases the OFD lock before starting the next RPM transaction.
+	for ((attempt = 1; attempt <= 200; attempt++)); do
+		if flock --fcntl --exclusive --nonblock "$lock_path" true; then
+			released=1
+			break
+		fi
+		/usr/bin/sleep 0.01
+	done
+	[[ "$released" -eq 1 ]]
 	rpm --nodeps --replacepkgs -i "$writer_rpm"
 }
 

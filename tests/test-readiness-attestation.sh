@@ -49,6 +49,16 @@ if [[ "$EUID" -eq 0 ]]; then
 		printf 'trusted root validation accepted a group-writable directory\n' >&2
 		exit 1
 	fi
+	sgid_parent="${test_root}/sgid-ready-parent"
+	mkdir -m 2755 "$sgid_parent"
+	chgrp 1 "$sgid_parent"
+	state_root="${sgid_parent}/state"
+	ready_root="${state_root}/ready"
+	ensure_ready_directory
+	[[ "$(stat -c '%u:%g:%a' "$state_root")" == "0:0:755" ]]
+	[[ "$(stat -c '%u:%g:%a' "$ready_root")" == "0:0:755" ]]
+	state_root="${test_root}/state"
+	ready_root="${state_root}/ready"
 fi
 
 # Test scope substitutes the fixed /boot path while leaving production code on

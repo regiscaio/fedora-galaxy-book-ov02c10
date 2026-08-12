@@ -55,6 +55,34 @@ migration_marker="${state_root}/migration.pending"
 [[ ! -e "${state_root}/pending/migration.pending" ]]
 if [[ "$EUID" -eq 0 ]]; then
 	[[ "$(stat -c '%u:%g' "$migration_marker")" == "0:0" ]]
+	[[ "$(stat -c '%u:%g:%a' "$state_root")" == "0:0:755" ]]
+	[[ "$(stat -c '%u:%g:%a' "${state_root}/pending")" == "0:0:755" ]]
+
+	unsafe_parent="${test_root}/unsafe-state-parent"
+	mkdir -m 2775 "$unsafe_parent"
+	chgrp 1 "$unsafe_parent"
+	state_root="${unsafe_parent}/state"
+	ensure_state_directory
+	[[ "$(stat -c '%u:%g:%a' "$state_root")" == "0:0:755" ]]
+	[[ "$(stat -c '%u:%g:%a' "${state_root}/pending")" == "0:0:755" ]]
+
+	real_stat_command="$stat_command"
+	fake_unsafe_ancestry_stat() {
+		if [[ "${*: -1}" == "/var/lib" && "$*" == *"%u:%g"* ]]; then
+			printf '0:1\n'
+			return 0
+		fi
+		"$real_stat_command" "$@"
+	}
+	stat_command=fake_unsafe_ancestry_stat
+	state_root="${test_root}/rejected-state"
+	if ensure_state_directory >/dev/null 2>&1; then
+		printf 'state directory accepted unsafe /var/lib ancestry metadata\n' >&2
+		exit 1
+	fi
+	[[ ! -e "$state_root" ]]
+	stat_command="$real_stat_command"
+	state_root="${test_root}/state"
 fi
 
 # Trigger mode must never have an RPM command to call. Its only trust inputs

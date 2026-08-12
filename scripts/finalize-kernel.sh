@@ -110,6 +110,7 @@ ensure_ready_directory() {
 			return 1
 		}
 		"$install_command" -d -o root -g root -m 0755 -- "$directory" || return 1
+		"$chmod_command" 00755 -- "$directory" || return 1
 		metadata="$("$stat_command" -Lc '%u:%g:%a' -- "$directory")" || return 1
 		[[ "$metadata" == "0:0:755" ]] || {
 			fail "readiness directory has unsafe metadata: ${directory} (${metadata})"
