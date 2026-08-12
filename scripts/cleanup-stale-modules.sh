@@ -76,6 +76,11 @@ stale_files=()
 affected_kernels=()
 
 for kernel in "${kernels[@]}"; do
+	if [[ ! "$kernel" =~ ^[[:alnum:]][[:alnum:].+_-]*$ ]]; then
+		printf 'Invalid kernel version: %s\n' "$kernel" >&2
+		exit 2
+	fi
+
 	kernel_dir="${module_root}/${kernel}"
 	if [[ ! -d "$kernel_dir" ]]; then
 		printf 'Skipping missing kernel module directory: %s\n' "$kernel_dir" >&2
@@ -84,9 +89,11 @@ for kernel in "${kernels[@]}"; do
 
 	for candidate in \
 		"${kernel_dir}"/updates/ov02c10.ko \
+		"${kernel_dir}"/updates/ov02c10.ko.gz \
 		"${kernel_dir}"/updates/ov02c10.ko.xz \
 		"${kernel_dir}"/updates/ov02c10.ko.zst \
 		"${kernel_dir}"/extra/ov02c10.ko \
+		"${kernel_dir}"/extra/ov02c10.ko.gz \
 		"${kernel_dir}"/extra/ov02c10.ko.xz \
 		"${kernel_dir}"/extra/ov02c10.ko.zst
 	do

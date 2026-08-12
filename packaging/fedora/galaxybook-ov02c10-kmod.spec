@@ -31,7 +31,13 @@ module stays in sync with the installed Intel IPU6 userspace and kernel stack.
 
 %package -n %{pkg_kmod_name}-common
 Summary:        Common files for the %{prjname} kernel module packaging
-Requires(posttrans): /usr/sbin/depmod
+Requires:       bash
+Requires:       coreutils
+Requires:       dracut
+Requires:       findutils
+Requires:       kmod
+Requires:       rpm
+Requires:       util-linux-core
 
 %description -n %{pkg_kmod_name}-common
 Common documentation and licensing files for the %{prjname} kernel module
@@ -51,12 +57,16 @@ install -d %{buildroot}%{_datadir}/doc/%{pkg_kmod_name}
 install -m 0644 README.md %{buildroot}%{_datadir}/doc/%{pkg_kmod_name}/README.md
 install -d %{buildroot}%{_datadir}/licenses/%{name}
 install -m 0644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
-install -Dm0644 data/modules-load.d/galaxybook-ov02c10.conf \
-  %{buildroot}%{_modulesloaddir}/galaxybook-ov02c10.conf
 install -Dm0644 data/modprobe.d/galaxybook-ov02c10.conf \
   %{buildroot}%{_modprobedir}/galaxybook-ov02c10.conf
 install -Dm0644 data/depmod.d/galaxybook-ov02c10.conf \
   %{buildroot}%{_depmoddir}/galaxybook-ov02c10.conf
+install -Dm0755 scripts/finalize-kernel.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/finalize-kernel
+install -Dm0755 scripts/migrate-legacy-config.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/migrate-legacy-config
+install -Dm0755 scripts/cleanup-stale-modules.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/cleanup-stale-modules
 
 for kernel_version in %{?kernel_versions}; do
   install -Dm755 _kmod_build_${kernel_version%%___*}/ov02c10.ko \
@@ -66,20 +76,19 @@ done
 %{?akmod_install}
 
 %posttrans -n %{pkg_kmod_name}-common
-if command -v depmod >/dev/null 2>&1; then
-  for kernel_dir in /lib/modules/*; do
-    [ -d "${kernel_dir}/extra/%{prjname}" ] || continue
-    if find "${kernel_dir}/extra/%{prjname}" -type f \( -name 'ov02c10.ko' -o -name 'ov02c10.ko.xz' -o -name 'ov02c10.ko.zst' \) -print -quit | grep -q .; then
-      depmod -a "${kernel_dir##*/}" || :
-    fi
-  done
-fi
+%{_libexecdir}/%{prjname}/migrate-legacy-config
+
+%transfiletriggerin -n %{pkg_kmod_name}-common -p /usr/bin/bash -- /lib/modules /usr/lib/modules
+%{_libexecdir}/%{prjname}/finalize-kernel --from-rpm-trigger
 
 %files -n %{pkg_kmod_name}-common
 %{_datadir}/doc/%{pkg_kmod_name}/README.md
 %license %{_datadir}/licenses/%{name}/LICENSE
-%{_modulesloaddir}/galaxybook-ov02c10.conf
 %{_modprobedir}/galaxybook-ov02c10.conf
 %{_depmoddir}/galaxybook-ov02c10.conf
+%dir %{_libexecdir}/%{prjname}
+%{_libexecdir}/%{prjname}/cleanup-stale-modules
+%{_libexecdir}/%{prjname}/finalize-kernel
+%{_libexecdir}/%{prjname}/migrate-legacy-config
 
 %changelog
