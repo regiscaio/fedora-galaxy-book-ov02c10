@@ -14,128 +14,198 @@ Only legacy direct overrides are considered:
   /lib/modules/<kernel>/extra/ov02c10.ko*
 
 Packaged modules, the in-tree Fedora module, and Intel IPU6-owned modules are
-left untouched.
+left untouched. Removal is refused unless the same kernel already has exactly
+one RPM-owned Galaxy Book replacement with matching vermagic.
 USAGE
 }
 
-apply=0
-module_root="/lib/modules"
-kernels=()
+rpm_command="/usr/bin/rpm"
+modinfo_command="/usr/bin/modinfo"
+depmod_command="/usr/bin/depmod"
+id_command="/usr/bin/id"
+rm_command="/usr/bin/rm"
+find_command="/usr/bin/find"
+sort_command="/usr/bin/sort"
+basename_command="/usr/bin/basename"
 
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-		--apply)
-			apply=1
-			shift
-			;;
-		--module-root)
-			if [[ $# -lt 2 ]]; then
-				printf 'Missing value for --module-root\n' >&2
-				exit 2
-			fi
-			module_root="$2"
-			shift 2
-			;;
-		--kernel)
-			if [[ $# -lt 2 ]]; then
-				printf 'Missing value for --kernel\n' >&2
-				exit 2
-			fi
-			kernels+=("$2")
-			shift 2
-			;;
-		-h|--help)
-			usage
-			exit 0
-			;;
-		*)
-			printf 'Unknown argument: %s\n' "$1" >&2
-			usage >&2
-			exit 2
-			;;
-	esac
-done
+main() {
+	local apply=0
+	local module_root="/lib/modules"
+	local kernel kernel_dir candidate stale_file replacement_dir replacement
+	local expected_owner replacement_owner replacement_vermagic vermagic_kernel
+	local -a kernels=()
+	local -a stale_files=()
+	local -a affected_kernels=()
+	local -a replacements=()
 
-if [[ ! -d "$module_root" ]]; then
-	printf 'Module root not found: %s\n' "$module_root" >&2
-	exit 1
-fi
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--apply)
+				apply=1
+				shift
+				;;
+			--module-root)
+				if [[ $# -lt 2 ]]; then
+					printf 'Missing value for --module-root\n' >&2
+					return 2
+				fi
+				module_root="$2"
+				shift 2
+				;;
+			--kernel)
+				if [[ $# -lt 2 ]]; then
+					printf 'Missing value for --kernel\n' >&2
+					return 2
+				fi
+				kernels+=("$2")
+				shift 2
+				;;
+			-h|--help)
+				usage
+				return 0
+				;;
+			*)
+				printf 'Unknown argument: %s\n' "$1" >&2
+				usage >&2
+				return 2
+				;;
+		esac
+	done
 
-if [[ "$apply" -eq 1 && "$(id -u)" -ne 0 ]]; then
-	printf 'Removing stale modules requires root. Re-run with sudo.\n' >&2
-	exit 1
-fi
-
-if [[ "${#kernels[@]}" -eq 0 ]]; then
-	while IFS= read -r -d '' kernel_dir; do
-		kernels+=("$(basename "$kernel_dir")")
-	done < <(find "$module_root" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
-fi
-
-stale_files=()
-affected_kernels=()
-
-for kernel in "${kernels[@]}"; do
-	if [[ ! "$kernel" =~ ^[[:alnum:]][[:alnum:].+_-]*$ ]]; then
-		printf 'Invalid kernel version: %s\n' "$kernel" >&2
-		exit 2
+	if [[ ! -d "$module_root" ]]; then
+		printf 'Module root not found: %s\n' "$module_root" >&2
+		return 1
 	fi
 
-	kernel_dir="${module_root}/${kernel}"
-	if [[ ! -d "$kernel_dir" ]]; then
-		printf 'Skipping missing kernel module directory: %s\n' "$kernel_dir" >&2
-		continue
+	if [[ "$apply" -eq 1 && "$("$id_command" -u)" -ne 0 ]]; then
+		printf 'Removing stale modules requires root. Re-run with sudo.\n' >&2
+		return 1
 	fi
 
-	for candidate in \
-		"${kernel_dir}"/updates/ov02c10.ko \
-		"${kernel_dir}"/updates/ov02c10.ko.gz \
-		"${kernel_dir}"/updates/ov02c10.ko.xz \
-		"${kernel_dir}"/updates/ov02c10.ko.zst \
-		"${kernel_dir}"/extra/ov02c10.ko \
-		"${kernel_dir}"/extra/ov02c10.ko.gz \
-		"${kernel_dir}"/extra/ov02c10.ko.xz \
-		"${kernel_dir}"/extra/ov02c10.ko.zst
-	do
-		[[ -e "$candidate" ]] || continue
+	if [[ "${#kernels[@]}" -eq 0 ]]; then
+		while IFS= read -r -d '' kernel_dir; do
+			kernels+=("$("$basename_command" "$kernel_dir")")
+		done < <("$find_command" "$module_root" \
+			-mindepth 1 -maxdepth 1 -type d -print0 | "$sort_command" -z)
+	fi
 
-		if rpm -qf -- "$candidate" >/dev/null 2>&1; then
-			printf 'Keeping packaged module: %s\n' "$candidate"
+	for kernel in "${kernels[@]}"; do
+		if [[ ! "$kernel" =~ ^[[:alnum:]][[:alnum:].+_-]*$ ]]; then
+			printf 'Invalid kernel version: %s\n' "$kernel" >&2
+			return 2
+		fi
+
+		kernel_dir="${module_root}/${kernel}"
+		if [[ ! -d "$kernel_dir" ]]; then
+			printf 'Skipping missing kernel module directory: %s\n' "$kernel_dir" >&2
 			continue
 		fi
 
-		stale_files+=("$candidate")
-		affected_kernels+=("$kernel")
+		for candidate in \
+			"${kernel_dir}"/updates/ov02c10.ko \
+			"${kernel_dir}"/updates/ov02c10.ko.gz \
+			"${kernel_dir}"/updates/ov02c10.ko.xz \
+			"${kernel_dir}"/updates/ov02c10.ko.zst \
+			"${kernel_dir}"/extra/ov02c10.ko \
+			"${kernel_dir}"/extra/ov02c10.ko.gz \
+			"${kernel_dir}"/extra/ov02c10.ko.xz \
+			"${kernel_dir}"/extra/ov02c10.ko.zst
+		do
+			[[ -e "$candidate" ]] || continue
+
+			if "$rpm_command" -qf -- "$candidate" >/dev/null 2>&1; then
+				printf 'Keeping packaged module: %s\n' "$candidate"
+				continue
+			fi
+
+			stale_files+=("$candidate")
+			affected_kernels+=("$kernel")
+		done
 	done
-done
 
-if [[ "${#stale_files[@]}" -eq 0 ]]; then
-	printf 'No stale unowned ov02c10 module copies found under %s\n' "$module_root"
-	exit 0
-fi
+	if [[ "${#stale_files[@]}" -eq 0 ]]; then
+		printf 'No stale unowned ov02c10 module copies found under %s\n' "$module_root"
+		return 0
+	fi
 
-if [[ "$apply" -eq 0 ]]; then
-	printf 'Stale unowned ov02c10 module copies found:\n'
+	if [[ "$apply" -eq 0 ]]; then
+		printf 'Stale unowned ov02c10 module copies found:\n'
+		for stale_file in "${stale_files[@]}"; do
+			printf '  %s\n' "$stale_file"
+		done
+		printf '\nDry run only. Re-run with --apply as root to remove them and refresh depmod.\n'
+		return 0
+	fi
+
+	mapfile -t affected_kernels < <(printf '%s\n' "${affected_kernels[@]}" | "$sort_command" -u)
+
+	for kernel in "${affected_kernels[@]}"; do
+		replacement_dir="${module_root}/${kernel}/extra/galaxybook-ov02c10/drivers/media/i2c"
+		replacements=()
+		for candidate in \
+			"${replacement_dir}/ov02c10.ko" \
+			"${replacement_dir}/ov02c10.ko.gz" \
+			"${replacement_dir}/ov02c10.ko.xz" \
+			"${replacement_dir}/ov02c10.ko.zst"
+		do
+			[[ -f "$candidate" && ! -L "$candidate" ]] && replacements+=("$candidate")
+		done
+
+		if [[ "${#replacements[@]}" -ne 1 ]]; then
+			printf 'Refusing cleanup for %s: expected exactly one external replacement, found %s.\n' \
+				"$kernel" "${#replacements[@]}" >&2
+			return 1
+		fi
+
+		replacement="${replacements[0]}"
+		expected_owner="kmod-galaxybook-ov02c10-${kernel}"
+		if ! replacement_owner="$("$rpm_command" -qf --qf '%{NAME}\n' -- "$replacement")"; then
+			printf 'Refusing cleanup for %s: replacement is not owned by an installed RPM.\n' \
+				"$kernel" >&2
+			return 1
+		fi
+		if [[ "$replacement_owner" != "$expected_owner" ]]; then
+			printf 'Refusing cleanup for %s: replacement owner is %s, expected %s.\n' \
+				"$kernel" "$replacement_owner" "$expected_owner" >&2
+			return 1
+		fi
+		if ! replacement_vermagic="$("$modinfo_command" -F vermagic -- "$replacement")"; then
+			printf 'Refusing cleanup for %s: replacement vermagic is unreadable.\n' \
+				"$kernel" >&2
+			return 1
+		fi
+		vermagic_kernel=""
+		read -r vermagic_kernel _ <<< "$replacement_vermagic" || true
+		if [[ "$vermagic_kernel" != "$kernel" ]]; then
+			printf 'Refusing cleanup for %s: replacement vermagic targets %s.\n' \
+				"$kernel" "${vermagic_kernel:-unknown}" >&2
+			return 1
+		fi
+	done
+
+	printf 'Removing stale unowned ov02c10 module copies:\n'
 	for stale_file in "${stale_files[@]}"; do
 		printf '  %s\n' "$stale_file"
+		if ! "$rm_command" -f -- "$stale_file"; then
+			printf 'Could not remove stale module: %s\n' "$stale_file" >&2
+			return 1
+		fi
 	done
-	printf '\nDry run only. Re-run with --apply as root to remove them and refresh depmod.\n'
-	exit 0
-fi
 
-printf 'Removing stale unowned ov02c10 module copies:\n'
-for stale_file in "${stale_files[@]}"; do
-	printf '  %s\n' "$stale_file"
-	rm -f -- "$stale_file"
-done
+	if [[ "$module_root" == "/lib/modules" || "$module_root" == "/usr/lib/modules" ]]; then
+		for kernel in "${affected_kernels[@]}"; do
+			printf 'Refreshing module dependencies for %s\n' "$kernel"
+			if ! "$depmod_command" -a "$kernel"; then
+				printf 'depmod failed for %s\n' "$kernel" >&2
+				return 1
+			fi
+		done
+	else
+		printf 'Skipped depmod because module root is not a system module root: %s\n' \
+			"$module_root"
+	fi
+}
 
-mapfile -t affected_kernels < <(printf '%s\n' "${affected_kernels[@]}" | sort -u)
-
-if [[ "$module_root" == "/lib/modules" ]]; then
-	for kernel in "${affected_kernels[@]}"; do
-		printf 'Refreshing module dependencies for %s\n' "$kernel"
-		depmod -a "$kernel"
-	done
-else
-	printf 'Skipped depmod because module root is not /lib/modules: %s\n' "$module_root"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
 fi

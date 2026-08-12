@@ -5,6 +5,7 @@ module_root="/lib/modules"
 lock_root="/run/lock"
 depmod_command="/usr/bin/depmod"
 modinfo_command="/usr/bin/modinfo"
+rpm_command="/usr/bin/rpm"
 dracut_command="/usr/bin/dracut"
 lsinitrd_command="/usr/bin/lsinitrd"
 flock_command="/usr/bin/flock"
@@ -71,7 +72,8 @@ validate_initramfs_module() {
 
 finalize_kernel() {
 	local kernel="$1"
-	local expected_dir resolved_module lock_file candidate
+	local expected_dir expected_owner resolved_module lock_file candidate payload
+	local payload_owner payload_vermagic vermagic_kernel
 	local -a payloads=()
 	local lock_fd
 
@@ -79,21 +81,6 @@ finalize_kernel() {
 
 	if [[ ! -d "${module_root}/${kernel}" ]]; then
 		fail "kernel module directory not found: ${module_root}/${kernel}"
-		return 1
-	fi
-
-	expected_dir="${module_root}/${kernel}/extra/galaxybook-ov02c10/drivers/media/i2c"
-	for candidate in \
-		"${expected_dir}/ov02c10.ko" \
-		"${expected_dir}/ov02c10.ko.xz" \
-		"${expected_dir}/ov02c10.ko.zst" \
-		"${expected_dir}/ov02c10.ko.gz"
-	do
-		[[ -f "$candidate" ]] && payloads+=("$candidate")
-	done
-
-	if [[ "${#payloads[@]}" -eq 0 ]]; then
-		fail "external OV02C10 payload not found for ${kernel}"
 		return 1
 	fi
 
@@ -108,6 +95,41 @@ finalize_kernel() {
 	fi
 	if ! "$flock_command" -x "$lock_fd"; then
 		fail "could not lock kernel finalization for ${kernel}"
+		return 1
+	fi
+
+	expected_dir="${module_root}/${kernel}/extra/galaxybook-ov02c10/drivers/media/i2c"
+	for candidate in \
+		"${expected_dir}/ov02c10.ko" \
+		"${expected_dir}/ov02c10.ko.xz" \
+		"${expected_dir}/ov02c10.ko.zst" \
+		"${expected_dir}/ov02c10.ko.gz"
+	do
+		[[ -f "$candidate" && ! -L "$candidate" ]] && payloads+=("$candidate")
+	done
+
+	if [[ "${#payloads[@]}" -ne 1 ]]; then
+		fail "expected exactly one external OV02C10 payload for ${kernel}, found ${#payloads[@]}"
+		return 1
+	fi
+	payload="${payloads[0]}"
+	expected_owner="kmod-galaxybook-ov02c10-${kernel}"
+	if ! payload_owner="$("$rpm_command" -qf --qf '%{NAME}\n' -- "$payload")"; then
+		fail "external OV02C10 payload is not owned by an installed RPM: ${payload}"
+		return 1
+	fi
+	if [[ "$payload_owner" != "$expected_owner" ]]; then
+		fail "external OV02C10 payload for ${kernel} is owned by ${payload_owner}, expected ${expected_owner}"
+		return 1
+	fi
+	if ! payload_vermagic="$("$modinfo_command" -F vermagic -- "$payload")"; then
+		fail "could not read vermagic from the external OV02C10 payload for ${kernel}"
+		return 1
+	fi
+	vermagic_kernel=""
+	read -r vermagic_kernel _ <<< "$payload_vermagic" || true
+	if [[ "$vermagic_kernel" != "$kernel" ]]; then
+		fail "external OV02C10 payload vermagic targets ${vermagic_kernel:-unknown}, expected ${kernel}"
 		return 1
 	fi
 

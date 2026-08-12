@@ -22,7 +22,15 @@ fake_depmod() {
 	depmod_args=("$@")
 }
 
+fake_rpm() {
+	printf '%s\n' "kmod-galaxybook-ov02c10-${kernel}"
+}
+
 fake_modinfo() {
+	if [[ "$1" == "-F" && "$2" == "vermagic" ]]; then
+		printf '%s SMP preempt mod_unload\n' "$kernel"
+		return
+	fi
 	printf '%s\n' "${expected_dir}/ov02c10.ko.xz"
 }
 
@@ -41,6 +49,7 @@ fake_flock() {
 
 depmod_command=fake_depmod
 modinfo_command=fake_modinfo
+rpm_command=fake_rpm
 dracut_command=fake_dracut
 lsinitrd_command=fake_lsinitrd
 flock_command=fake_flock
@@ -49,7 +58,37 @@ finalize_kernel "$kernel"
 [[ "${depmod_args[*]}" == "-a ${kernel}" ]]
 [[ "${dracut_args[*]}" == "--force --kver ${kernel} --add-drivers ov02c10" ]]
 
+fake_rpm() {
+	printf '%s\n' "unrelated-kmod"
+}
+depmod_args=()
+if finalize_kernel "$kernel" >/dev/null 2>&1; then
+	printf 'finalize-kernel accepted a payload owned by another package\n' >&2
+	exit 1
+fi
+[[ "${#depmod_args[@]}" -eq 0 ]]
+
+fake_rpm() {
+	printf '%s\n' "kmod-galaxybook-ov02c10-${kernel}"
+}
 fake_modinfo() {
+	if [[ "$1" == "-F" && "$2" == "vermagic" ]]; then
+		printf '7.1.7-wrong.x86_64 SMP preempt mod_unload\n'
+		return
+	fi
+	printf '%s\n' "${expected_dir}/ov02c10.ko.xz"
+}
+if finalize_kernel "$kernel" >/dev/null 2>&1; then
+	printf 'finalize-kernel accepted a payload for another kernel\n' >&2
+	exit 1
+fi
+[[ "${#depmod_args[@]}" -eq 0 ]]
+
+fake_modinfo() {
+	if [[ "$1" == "-F" && "$2" == "vermagic" ]]; then
+		printf '%s SMP preempt mod_unload\n' "$kernel"
+		return
+	fi
 	printf '%s\n' "${module_root}/${kernel}/kernel/drivers/media/i2c/ov02c10.ko.xz"
 }
 if finalize_kernel "$kernel" >/dev/null 2>&1; then
@@ -58,6 +97,10 @@ if finalize_kernel "$kernel" >/dev/null 2>&1; then
 fi
 
 fake_modinfo() {
+	if [[ "$1" == "-F" && "$2" == "vermagic" ]]; then
+		printf '%s SMP preempt mod_unload\n' "$kernel"
+		return
+	fi
 	printf '%s\n' "${expected_dir}/ov02c10.ko.xz"
 }
 fake_lsinitrd() {
