@@ -12,7 +12,17 @@ etc_root="${test_root}/etc"
 mkdir -p "${etc_root}/modules-load.d" "${etc_root}/modprobe.d" "${etc_root}/depmod.d"
 
 fake_unowned_rpm() {
+	local path="${*: -1}"
+	printf 'file %s is not owned by any package\n' "$path" >&2
 	return 1
+}
+
+acquire_rpm_read_lock() {
+	return 0
+}
+
+acquire_lifecycle_lock() {
+	return 0
 }
 
 rpm_command=fake_unowned_rpm
@@ -37,6 +47,7 @@ main --dry-run --etc-root "$etc_root"
 [[ -e "${etc_root}/modules-load.d/galaxybook-ov02c10.conf" ]]
 
 fake_owned_rpm() {
+	printf 'owned-package\n'
 	return 0
 }
 
@@ -44,6 +55,18 @@ rpm_command=fake_owned_rpm
 dry_run=0
 main --etc-root "$etc_root"
 [[ -e "${etc_root}/modules-load.d/galaxybook-ov02c10.conf" ]]
+[[ -e "${etc_root}/depmod.d/galaxybook-ov02c10.conf" ]]
+
+fake_error_rpm() {
+	printf 'rpm database failure\n' >&2
+	return 1
+}
+
+rpm_command=fake_error_rpm
+if main --etc-root "$etc_root" >/dev/null 2>&1; then
+	printf 'migration treated an RPM database error as an unowned file\n' >&2
+	exit 1
+fi
 [[ -e "${etc_root}/depmod.d/galaxybook-ov02c10.conf" ]]
 
 printf 'test-migrate-legacy-config: ok\n'

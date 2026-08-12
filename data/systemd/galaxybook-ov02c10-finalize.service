@@ -1,0 +1,16 @@
+[Unit]
+Description=Finalize queued Galaxy Book OV02C10 kernel modules
+Documentation=https://github.com/regiscaio/fedora-galaxy-book-ov02c10
+ConditionPathExistsGlob=/var/lib/galaxybook-ov02c10/pending/*.pending
+Wants=akmods.service systemd-logind.service
+After=local-fs.target akmods.service systemd-logind.service
+Before=multi-user.target
+StartLimitIntervalSec=15min
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-inhibit --what=shutdown:sleep:idle --who=galaxybook-ov02c10 --why=OV02C10-kernel-finalization --mode=block /usr/libexec/galaxybook-ov02c10/finalize-pending
+Restart=on-failure
+RestartSec=60s
+TimeoutStartSec=20min

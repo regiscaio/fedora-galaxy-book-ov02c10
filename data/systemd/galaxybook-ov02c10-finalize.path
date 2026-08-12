@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for queued Galaxy Book OV02C10 kernel finalization
+Documentation=https://github.com/regiscaio/fedora-galaxy-book-ov02c10
+After=local-fs.target
+
+[Path]
+PathChanged=/var/lib/galaxybook-ov02c10/pending
+MakeDirectory=true
+Unit=galaxybook-ov02c10-finalize.service
+
+[Install]
+WantedBy=multi-user.target

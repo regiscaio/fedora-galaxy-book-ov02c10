@@ -1,0 +1,12 @@
+[Unit]
+Description=Retry queued Galaxy Book OV02C10 kernel finalization
+Documentation=https://github.com/regiscaio/fedora-galaxy-book-ov02c10
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=galaxybook-ov02c10-finalize.service
+
+[Install]
+WantedBy=timers.target

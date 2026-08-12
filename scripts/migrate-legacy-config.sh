@@ -7,6 +7,14 @@ rpm_command="/usr/bin/rpm"
 cmp_command="/usr/bin/cmp"
 rm_command="/usr/bin/rm"
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=rpm-file-owner.sh
+source "${script_dir}/rpm-file-owner.sh"
+# shellcheck source=rpm-read-lock.sh
+source "${script_dir}/rpm-read-lock.sh"
+# shellcheck source=lifecycle-lock.sh
+source "${script_dir}/lifecycle-lock.sh"
+
 usage() {
 	cat <<'USAGE'
 Usage: migrate-legacy-config [--dry-run] [--etc-root PATH]
@@ -29,6 +37,7 @@ migrate_file() {
 	local expected_content
 	local target="${etc_root}/${relative_path}"
 	local matches_generated_content=0
+	local owner_status
 
 	if [[ ! -e "$target" && ! -L "$target" ]]; then
 		return 0
@@ -39,9 +48,15 @@ migrate_file() {
 		return 0
 	fi
 
-	if "$rpm_command" -qf -- "$target" >/dev/null 2>&1; then
+	if rpm_file_owner "$target"; then
 		printf 'Preserving package-owned configuration: %s\n' "$target"
 		return 0
+	else
+		owner_status=$?
+		if [[ "$owner_status" -ne 1 ]]; then
+			fail "could not prove that legacy configuration is unowned: ${target}"
+			return 1
+		fi
 	fi
 
 	for expected_content in "$@"; do
@@ -103,6 +118,10 @@ main() {
 	if [[ "$etc_root" == "/etc" && "$EUID" -ne 0 ]]; then
 		fail "legacy configuration migration must run as root"
 		return 1
+	fi
+	if [[ "$dry_run" -ne 1 ]]; then
+		acquire_lifecycle_lock || return 1
+		acquire_rpm_read_lock "$@" || return 1
 	fi
 
 	migrate_file "modules-load.d/galaxybook-ov02c10.conf" $'ov02c10\n' || return 1

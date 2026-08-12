@@ -20,6 +20,7 @@ BuildRequires:  elfutils-libelf-devel
 BuildRequires:  gcc
 BuildRequires:  kmodtool
 BuildRequires:  make
+BuildRequires:  systemd-rpm-macros
 
 %{expand:%(kmodtool --target %{_target_cpu} --repo fedora --kmodname %{prjname} --akmod %{?kernels:--for-kernels "%{?kernels}"} 2>/dev/null)}
 
@@ -38,7 +39,9 @@ Requires:       dracut
 Requires:       findutils
 Requires:       kmod
 Requires:       rpm
+Requires:       systemd
 Requires:       util-linux-core
+%{?systemd_requires}
 
 %description -n %{pkg_kmod_name}-common
 Common documentation and licensing files for the %{prjname} kernel module
@@ -64,23 +67,54 @@ install -Dm0644 data/depmod.d/galaxybook-ov02c10.conf \
   %{buildroot}%{_depmoddir}/galaxybook-ov02c10.conf
 install -Dm0755 scripts/finalize-kernel.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/finalize-kernel
+install -Dm0755 scripts/finalize-pending.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/finalize-pending
 install -Dm0755 scripts/migrate-legacy-config.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/migrate-legacy-config
 install -Dm0755 scripts/cleanup-stale-modules.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/cleanup-stale-modules
+install -Dm0755 scripts/queue-finalization.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/queue-finalization
+install -Dm0644 scripts/rpm-file-owner.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/rpm-file-owner.sh
+install -Dm0644 scripts/rpm-read-lock.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/rpm-read-lock.sh
+install -Dm0644 scripts/lifecycle-lock.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/lifecycle-lock.sh
+install -Dm0644 data/systemd/galaxybook-ov02c10-finalize.service \
+  %{buildroot}%{_unitdir}/galaxybook-ov02c10-finalize.service
+install -Dm0644 data/systemd/galaxybook-ov02c10-finalize.path \
+  %{buildroot}%{_unitdir}/galaxybook-ov02c10-finalize.path
+install -Dm0644 data/systemd/galaxybook-ov02c10-finalize.timer \
+  %{buildroot}%{_unitdir}/galaxybook-ov02c10-finalize.timer
+install -Dm0644 data/systemd/90-galaxybook-ov02c10.preset \
+  %{buildroot}%{_presetdir}/90-galaxybook-ov02c10.preset
+install -d -m 0755 \
+  %{buildroot}%{_sharedstatedir}/galaxybook-ov02c10/pending
+install -d -m 0755 \
+  %{buildroot}%{_sharedstatedir}/galaxybook-ov02c10/ready
 
 for kernel_version in %{?kernel_versions}; do
-  install -Dm755 _kmod_build_${kernel_version%%___*}/ov02c10.ko \
+  install -Dm0644 _kmod_build_${kernel_version%%___*}/ov02c10.ko \
     %{buildroot}%{kmodinstdir_prefix}/${kernel_version%%___*}/%{kmodinstdir_postfix}/drivers/media/i2c/ov02c10.ko
 done
 
 %{?akmod_install}
 
+%post -n %{pkg_kmod_name}-common
+%systemd_post galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
+
+%preun -n %{pkg_kmod_name}-common
+%systemd_preun galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
+
+%postun -n %{pkg_kmod_name}-common
+%systemd_postun galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
+
 %posttrans -n %{pkg_kmod_name}-common
-%{_libexecdir}/%{prjname}/migrate-legacy-config
+%{_libexecdir}/%{prjname}/queue-finalization --migration
 
 %transfiletriggerin -n %{pkg_kmod_name}-common -p /usr/bin/bash -- /lib/modules /usr/lib/modules
-%{_libexecdir}/%{prjname}/finalize-kernel --from-rpm-trigger
+%{_libexecdir}/%{prjname}/queue-finalization --from-rpm-trigger
 
 %files -n %{pkg_kmod_name}-common
 %{_datadir}/doc/%{pkg_kmod_name}/README.md
@@ -90,6 +124,18 @@ done
 %dir %{_libexecdir}/%{prjname}
 %{_libexecdir}/%{prjname}/cleanup-stale-modules
 %{_libexecdir}/%{prjname}/finalize-kernel
+%{_libexecdir}/%{prjname}/finalize-pending
 %{_libexecdir}/%{prjname}/migrate-legacy-config
+%{_libexecdir}/%{prjname}/queue-finalization
+%{_libexecdir}/%{prjname}/rpm-file-owner.sh
+%{_libexecdir}/%{prjname}/rpm-read-lock.sh
+%{_libexecdir}/%{prjname}/lifecycle-lock.sh
+%{_unitdir}/galaxybook-ov02c10-finalize.path
+%{_unitdir}/galaxybook-ov02c10-finalize.service
+%{_unitdir}/galaxybook-ov02c10-finalize.timer
+%{_presetdir}/90-galaxybook-ov02c10.preset
+%dir %{_sharedstatedir}/galaxybook-ov02c10
+%dir %{_sharedstatedir}/galaxybook-ov02c10/pending
+%dir %{_sharedstatedir}/galaxybook-ov02c10/ready
 
 %changelog

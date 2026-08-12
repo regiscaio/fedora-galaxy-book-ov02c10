@@ -5,6 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../scripts/cleanup-stale-modules.sh
 source "${repo_root}/scripts/cleanup-stale-modules.sh"
 
+acquire_rpm_read_lock() {
+	return 0
+}
+
+acquire_lifecycle_lock() {
+	return 0
+}
+
 test_root="$(mktemp -d /tmp/ov02c10-cleanup-test.XXXXXX)"
 trap 'rm -rf -- "$test_root"' EXIT
 
@@ -36,12 +44,17 @@ fake_rpm() {
 			printf '%s\n' "$fake_owner"
 			;;
 		*)
+			printf 'file %s is not owned by any package\n' "$path" >&2
 			return 1
 			;;
 	esac
 }
 
 fake_modinfo() {
+	if [[ "$1" == "-F" && "$2" == "name" ]]; then
+		printf 'ov02c10\n'
+		return
+	fi
 	printf '%s SMP preempt mod_unload\n' "$fake_vermagic_kernel"
 }
 

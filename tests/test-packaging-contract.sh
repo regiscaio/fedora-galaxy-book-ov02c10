@@ -31,8 +31,16 @@ trap 'rm -f -- "$expanded_spec" "$expanded_kernel_spec_716" "$expanded_kernel_sp
 rpmspec -P packaging/fedora/galaxybook-ov02c10-kmod.spec > "$expanded_spec"
 rg -q '^%transfiletriggerin -n galaxybook-ov02c10-kmod-common .* -- /lib/modules /usr/lib/modules$' \
 	"$expanded_spec" || fail "expanded spec lost the file trigger"
-rg -q '/usr/libexec/galaxybook-ov02c10/finalize-kernel --from-rpm-trigger' \
-	"$expanded_spec" || fail "expanded spec does not call the finalizer"
+rg -q '/usr/libexec/galaxybook-ov02c10/queue-finalization --from-rpm-trigger' \
+	"$expanded_spec" || fail "expanded spec does not queue the finalizer"
+rg -q '/usr/libexec/galaxybook-ov02c10/queue-finalization --migration' \
+	"$expanded_spec" || fail "expanded spec does not queue legacy migration"
+if sed -n '/^%posttrans -n galaxybook-ov02c10-kmod-common$/,/^%transfiletriggerin/p' \
+	"$expanded_spec" | \
+	rg -q 'rpm -q|/usr/bin/rpm|migrate-legacy-config|finalize-kernel'
+then
+	fail "expanded scriptlets still run an RPM database consumer in-transaction"
+fi
 if rg -q '/modules-load.d/galaxybook-ov02c10.conf' "$expanded_spec"; then
 	fail "expanded package still ships modules-load"
 fi
@@ -69,6 +77,44 @@ rg -q 'v4l2_ctrl_new_fwnode_properties' module/ov02c10.c || \
 	fail "driver does not expose fwnode controls"
 rg -q -- '--add-drivers ov02c10' scripts/finalize-kernel.sh || \
 	fail "finalizer must add ov02c10 only after validating the external payload"
+rg -q 'validate_replacement.*"\$migrate_command".*"\$cleanup_command".*finalize_kernel' < <(
+	tr '\n' ' ' < scripts/finalize-kernel.sh
+) || fail "public finalizer lost validate-before-mutation lifecycle ordering"
+rg -Fq 'queue_marker migration "$state_root"' scripts/queue-finalization.sh || \
+	fail "common-only migration marker would enter the watched kernel queue"
+rg -Fq 'local migration_marker="${state_root}/migration.pending"' \
+	scripts/finalize-pending.sh || fail "worker lost the deferred migration marker"
+rg -q '^Requires:[[:space:]]+systemd$' packaging/fedora/galaxybook-ov02c10-kmod.spec || \
+	fail "common package does not require systemd"
+rg -q '^BuildRequires:[[:space:]]+systemd-rpm-macros$' \
+	packaging/fedora/galaxybook-ov02c10-kmod.spec || \
+	fail "spec does not declare the systemd RPM macros build dependency"
+for unit in service path timer; do
+	rg -Fq "/usr/lib/systemd/system/galaxybook-ov02c10-finalize.${unit}" "$expanded_spec" || \
+		fail "expanded package lost the ${unit} unit"
+done
+rg -q '^ExecStart=/usr/bin/systemd-inhibit .*finalize-pending$' \
+	data/systemd/galaxybook-ov02c10-finalize.service || \
+	fail "pending worker is not protected by a shutdown inhibitor"
+rg -q '^ExecStart=/usr/bin/systemd-inhibit --what=shutdown:sleep:idle ' \
+	data/systemd/galaxybook-ov02c10-finalize.service || \
+	fail "pending worker inhibitor does not cover idle, sleep and shutdown"
+rg -q '^Wants=akmods.service systemd-logind.service$' \
+	data/systemd/galaxybook-ov02c10-finalize.service || \
+	fail "pending worker does not wait for akmods"
+rg -q '^enable galaxybook-ov02c10-finalize.path$' \
+	data/systemd/90-galaxybook-ov02c10.preset || \
+	fail "path unit is not enabled by the vendor preset"
+rg -q '^enable galaxybook-ov02c10-finalize.timer$' \
+	data/systemd/90-galaxybook-ov02c10.preset || \
+	fail "timer unit is not enabled by the vendor preset"
+rg -q '^PathChanged=/var/lib/galaxybook-ov02c10/pending$' \
+	data/systemd/galaxybook-ov02c10-finalize.path || \
+	fail "pending directory is not watched for concurrent requests"
+rg -Fq '/var/lib/galaxybook-ov02c10/ready' "$expanded_spec" || \
+	fail "expanded package lost the readiness state directory"
+rg -Fq '/var/lib/galaxybook-ov02c10/pending' "$expanded_spec" || \
+	fail "expanded package lost the durable kernel queue"
 
 if rg -q 'data/modules-load.d/galaxybook-ov02c10.conf' \
 	README.md README.en.md README.es.md README.it.md

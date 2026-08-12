@@ -28,11 +28,20 @@ find_command="/usr/bin/find"
 sort_command="/usr/bin/sort"
 basename_command="/usr/bin/basename"
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=rpm-file-owner.sh
+source "${script_dir}/rpm-file-owner.sh"
+# shellcheck source=rpm-read-lock.sh
+source "${script_dir}/rpm-read-lock.sh"
+# shellcheck source=lifecycle-lock.sh
+source "${script_dir}/lifecycle-lock.sh"
+
 main() {
 	local apply=0
 	local module_root="/lib/modules"
 	local kernel kernel_dir candidate stale_file replacement_dir replacement
-	local expected_owner replacement_owner replacement_vermagic vermagic_kernel
+	local expected_owner replacement_owner replacement_name replacement_vermagic vermagic_kernel
+	local owner_status
 	local -a kernels=()
 	local -a stale_files=()
 	local -a affected_kernels=()
@@ -81,6 +90,10 @@ main() {
 		printf 'Removing stale modules requires root. Re-run with sudo.\n' >&2
 		return 1
 	fi
+	if [[ "$apply" -eq 1 ]]; then
+		acquire_lifecycle_lock || return 1
+		acquire_rpm_read_lock "$@" || return 1
+	fi
 
 	if [[ "${#kernels[@]}" -eq 0 ]]; then
 		while IFS= read -r -d '' kernel_dir; do
@@ -113,9 +126,21 @@ main() {
 		do
 			[[ -e "$candidate" ]] || continue
 
-			if "$rpm_command" -qf -- "$candidate" >/dev/null 2>&1; then
+			if [[ -L "$candidate" || ! -f "$candidate" ]]; then
+				printf 'Refusing unsafe legacy module path: %s\n' "$candidate" >&2
+				return 1
+			fi
+
+			if rpm_file_owner "$candidate"; then
 				printf 'Keeping packaged module: %s\n' "$candidate"
 				continue
+			else
+				owner_status=$?
+				if [[ "$owner_status" -ne 1 ]]; then
+					printf 'Could not prove that legacy module is unowned: %s\n' \
+						"$candidate" >&2
+					return 1
+				fi
 			fi
 
 			stale_files+=("$candidate")
@@ -159,14 +184,29 @@ main() {
 
 		replacement="${replacements[0]}"
 		expected_owner="kmod-galaxybook-ov02c10-${kernel}"
-		if ! replacement_owner="$("$rpm_command" -qf --qf '%{NAME}\n' -- "$replacement")"; then
-			printf 'Refusing cleanup for %s: replacement is not owned by an installed RPM.\n' \
-				"$kernel" >&2
+		if rpm_file_owner "$replacement"; then
+			replacement_owner="$rpm_file_owner_result"
+		else
+			owner_status=$?
+			if [[ "$owner_status" -eq 1 ]]; then
+				printf 'Refusing cleanup for %s: replacement is not owned by an installed RPM.\n' \
+					"$kernel" >&2
+			fi
 			return 1
 		fi
 		if [[ "$replacement_owner" != "$expected_owner" ]]; then
 			printf 'Refusing cleanup for %s: replacement owner is %s, expected %s.\n' \
 				"$kernel" "$replacement_owner" "$expected_owner" >&2
+			return 1
+		fi
+		if ! replacement_name="$("$modinfo_command" -F name -- "$replacement")"; then
+			printf 'Refusing cleanup for %s: replacement module name is unreadable.\n' \
+				"$kernel" >&2
+			return 1
+		fi
+		if [[ "$replacement_name" != "ov02c10" ]]; then
+			printf 'Refusing cleanup for %s: replacement module name is %s.\n' \
+				"$kernel" "${replacement_name:-unknown}" >&2
 			return 1
 		fi
 		if ! replacement_vermagic="$("$modinfo_command" -F vermagic -- "$replacement")"; then
