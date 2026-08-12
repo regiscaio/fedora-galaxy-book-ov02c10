@@ -16,8 +16,8 @@ sudo dnf config-manager addrepo --from-repofile=https://packages.caioregis.com/f
 sudo dnf install akmod-galaxybook-ov02c10
 ```
 
-Na prática, para uma experiência completa com o Galaxy Book4 Ultra, também faz
-sentido instalar:
+Como ferramentas complementares de diagnóstico e userspace no Galaxy Book4
+Ultra, também faz sentido instalar:
 
 ```bash
 sudo dnf install galaxybook-camera galaxybook-setup
@@ -34,20 +34,24 @@ entre o módulo do sensor e o restante da pilha IPU6 instalada no sistema.
 
 ## Status atual
 
-No estado validado em abril de 2026, este driver já cobre o cenário crítico do
-Galaxy Book4 Ultra:
+No estado validado em agosto de 2026, o empacotamento instala o módulo externo,
+prioriza-o sobre a cópia in-tree, registra o sensor no grafo IPU6 e permite que
+o `libcamera` enumere a câmera. Isso comprova **instalação e registro**, não
+captura estável.
 
-- o modulo corrigido pode ser carregado de um caminho externo gerenciado por
-  RPM com `Secure Boot` ativo, desde que o fluxo de assinatura do `akmods`
-  esteja configurado no host;
-- a câmera volta a aparecer no `libcamera` quando o sistema realmente usa o
-  módulo corrigido, em vez da cópia in-tree do kernel;
-- a quirk de rotação para o Galaxy Book4 Ultra evita a imagem invertida no app
-  nativo de câmera.
+A captura no Galaxy Book4 Ultra ainda termina sem quadros e registra
+`csi2-4 error: Frame sync error`. A máquina fornece clock externo de 26 MHz,
+mas nem o [driver Linux v7.1](https://github.com/torvalds/linux/blob/v7.1/drivers/media/i2c/ov02c10.c)
+nem a [base Intel IPU6](https://github.com/intel/ipu6-drivers/blob/master/drivers/media/i2c/ov02c10.c)
+trazem uma sequência PLL de 26 MHz validada para manter o link de 400 MHz. A
+[discussão Intel sobre o clock](https://github.com/intel/ipu6-drivers/issues/171)
+também identifica essa sequência de registradores como o ponto ausente.
 
-O que este repositório **não** resolve sozinho é a exposição da câmera para
-navegadores e comunicadores WebRTC. Esse fluxo continua centralizado no
-`Galaxy Book Setup`, porque depende também de bridge V4L2 e integração do host.
+Portanto, este projeto **não declara a câmera funcional** neste hardware. Ele
+corrige o ciclo de instalação, probe e metadados sem inventar registradores de
+PLL. A exposição para navegadores e comunicadores WebRTC continua no
+`Galaxy Book Setup`, mas nenhuma bridge de userspace corrige o erro físico de
+sincronismo.
 
 ## O que este repositório entrega
 
@@ -57,14 +61,23 @@ O repositório separa claramente três camadas:
   source RPM do Intel IPU6 usado no Fedora;
 - `module/ov02c10.c`: versão downstream com o delta específico necessário;
 - `patches/0001-galaxy-book-ov02c10-downstream.patch`: patch gerado a partir
-  da diferença entre os dois arquivos.
-- `data/modules-load.d/galaxybook-ov02c10.conf`: configuração para garantir
-  que o módulo seja carregado automaticamente no boot;
+  da diferença entre os dois arquivos;
 - `data/modprobe.d/galaxybook-ov02c10.conf`: `softdep` para pedir o `ov02c10`
-  antes do `intel_ipu6_isys`.
+  antes do `intel_ipu6_isys`;
 - `data/depmod.d/galaxybook-ov02c10.conf`: override para priorizar o modulo
   empacotado em `extra/galaxybook-ov02c10/drivers/media/i2c` sobre a copia
-  in-tree do Fedora.
+  in-tree do Fedora;
+- `scripts/finalize-kernel.sh`: finalização do `depmod` e do initramfs para o
+  mesmo kernel somente após validar owner RPM, `vermagic` e payload externo;
+- `scripts/migrate-legacy-config.sh`: remoção conservadora de shadows antigos
+  em `/etc` somente quando os bytes forem exatamente os gerados pelo projeto;
+- `scripts/cleanup-stale-modules.sh`: detecção e limpeza protegida de módulos
+  manuais antigos.
+
+O projeto não instala mais `modules-load.d`. Forçar o sensor no início do boot
+podia antecipar o probe antes de o grafo IPU6 estar pronto e produzir um defer
+transitório. O carregamento fica a cargo da demanda do dispositivo, com o
+`softdep` preservando a ordem necessária.
 
 O empacotamento Fedora gera:
 
@@ -77,10 +90,17 @@ O empacotamento Fedora gera:
 O delta downstream atual é intencionalmente pequeno:
 
 - expõe `get_selection()` e metadados de crop para que o userspace consiga
-  enxergar corretamente a área ativa do sensor em cima da base Intel IPU6.
+  enxergar corretamente a área ativa do sensor em cima da base Intel IPU6;
 - aplica a quirk de rotação do OV02C10 também no Samsung Galaxy Book4 Ultra,
   para que a imagem não fique invertida quando o módulo corrigido estiver em
-  uso.
+  uso;
+- valida os recursos de power management e o SSDB, trata defer de probe com a
+  API apropriada e publica os controles de orientação/rotação do firmware;
+- corrige os metadados do modo de duas lanes para `pixel_rate=160 MHz` e
+  `HTS=2280`, mantendo o mesmo line time e produzindo `HBLANK` válido.
+
+Essa correção de timing é de metadados: ela não altera a tabela PLL do sensor e
+não resolve, por si só, o `Frame sync error` observado com clock de 26 MHz.
 
 O rebase para a base Intel IPU6 foi uma decisão deliberada: o módulo antigo,
 embora resolvesse o probe do sensor, tinha divergido demais do stack instalado
@@ -93,10 +113,11 @@ O trabalho aqui foi viabilizado pelos aprendizados do repositório comunitário:
 
 - <https://github.com/abdallah-alkanani/galaxybook3-ov02c10-fix/>
 
-Esse repositório foi fundamental para validar o caminho da câmera e para
-identificar os pontos mais importantes em clock e crop. Ainda assim, este
-projeto **não** é um fork direto daquele código. A meta aqui é manter um patch
-pequeno em cima do `ov02c10` do Intel IPU6 que de fato acompanha o Fedora.
+Esse repositório orientou a investigação do caminho da câmera e dos pontos de
+clock e crop. Ele não fornece, contudo, uma sequência PLL de 26 MHz validada
+para esta máquina. Este projeto **não** é um fork direto daquele código: a meta
+é manter um patch pequeno em cima do `ov02c10` do Intel IPU6 que acompanha o
+Fedora.
 
 ## Escopo
 
@@ -121,6 +142,9 @@ sudo dnf install \
   /caminho/para/galaxybook-ov02c10-kmod-common-*.rpm \
   /caminho/para/akmod-galaxybook-ov02c10-*.rpm \
   /caminho/para/kmod-galaxybook-ov02c10-*.rpm
+kernel="$(uname -r)"
+sudo akmods --force --akmod galaxybook-ov02c10 --kernels "$kernel"
+sudo /usr/libexec/galaxybook-ov02c10/finalize-kernel --kernel "$kernel"
 sudo reboot
 ```
 
@@ -136,25 +160,31 @@ arquivos na mesma transação (`common`, `akmod` e `kmod`). Um metapacote
 `kmod-galaxybook-ov02c10` antigo pode manter a versão anterior do `akmod`
 presa por dependência exata e fazer o `dnf` ignorar a atualização do driver.
 
-O pacote comum também instala três configurações importantes:
+O pacote comum instala duas configurações importantes:
 
-- um arquivo em `modules-load.d` para carregar `ov02c10` no boot;
 - um `softdep` para preferir `ov02c10` antes do `intel_ipu6_isys`;
 - um override em `depmod.d` para priorizar o modulo empacotado em
   `extra/galaxybook-ov02c10/drivers/media/i2c` sobre o driver in-tree do
   Fedora.
 
-Isso evita um estado em que o modulo corrigido existe em disco, mas o
-`depmod` continua apontando `ov02c10` para o driver in-tree do kernel.
-Ao atualizar a regra, o pacote comum reexecuta `depmod` para os kernels que já
-possuem payload `extra/galaxybook-ov02c10`, evitando que o próximo boot continue
-usando um índice antigo.
+Um `transfiletrigger` do RPM reage quando o kmod real é instalado — inclusive
+quando isso ocorre numa transação posterior iniciada pelo `akmods`. Para cada
+kernel, o finalizador exige exatamente um payload pertencente a
+`kmod-galaxybook-ov02c10-<kernel>` e com `vermagic` correspondente; só então
+executa `depmod`, confirma a resolução por `modinfo`, reconstrói o initramfs e
+confirma com `lsinitrd` que não entrou uma cópia in-tree. Falhas não são
+mascaradas.
+
+O pacote também migra arquivos legados em `/etc/modules-load.d`,
+`/etc/modprobe.d` e `/etc/depmod.d`. Só remove um arquivo regular não pertencente
+a RPM quando seus bytes correspondem exatamente a uma variante historicamente
+gerada; symlinks e customizações locais são preservados.
 
 Se for necessário forçar a recompilação do módulo, use:
 
 ```bash
 sudo akmods --force --akmod galaxybook-ov02c10 --kernels "$(uname -r)"
-sudo depmod -a
+sudo /usr/libexec/galaxybook-ov02c10/finalize-kernel --kernel "$(uname -r)"
 sudo reboot
 ```
 
@@ -167,29 +197,39 @@ make cleanup-stale-modules
 sudo make cleanup-stale-modules-apply
 ```
 
-O alvo de limpeza remove somente overrides diretos antigos em `updates/` ou
-`extra/` que nao pertencam a pacote nenhum. O modulo in-tree do Fedora e os
-modulos empacotados pelo Intel IPU6 permanecem intocados.
+O alvo de limpeza considera somente overrides diretos antigos em `updates/` ou
+`extra/` que não pertençam a pacote nenhum. Mesmo com `--apply`, ele recusa a
+remoção se o mesmo kernel ainda não tiver exatamente um replacement externo,
+pertencente ao RPM esperado e com `vermagic` correto. O módulo in-tree do Fedora
+e os módulos empacotados pelo Intel IPU6 permanecem intocados.
 
 ### Validação após a instalação
 
-Os checks mais úteis depois do reboot são:
+Antes do reboot, o comando `finalize-kernel` acima é o gate: ele só termina com
+sucesso quando o módulo externo e o initramfs do **mesmo kernel** estão
+coerentes. Depois do reboot, separe a validação em três níveis:
 
 ```bash
 modinfo -n ov02c10
+rpm -qf "$(modinfo -n ov02c10)"
 lsmod | grep '^ov02c10 '
 cam -l
-journalctl -b -k | grep -i ov02c10
+cam -c 1 --capture=10
+journalctl -b -k | grep -Ei 'ov02c10|frame sync|csi2'
 ```
 
-O resultado esperado é:
+Os três níveis significam:
 
-- o módulo `ov02c10` vindo de um caminho externo priorizado para o sistema,
-  normalmente `extra/galaxybook-ov02c10/drivers/media/i2c` via `depmod.d`, e
-  não do `kernel/drivers/...` in-tree;
-- o módulo efetivamente carregado no kernel, e não apenas instalado em disco;
-- a câmera aparecendo no `libcamera`;
-- ausência do erro `probe with driver ov02c10 failed with error -22`.
+- **instalado**: `modinfo` aponta para
+  `extra/galaxybook-ov02c10/drivers/media/i2c` e `rpm -qf` retorna exatamente o
+  kmod do kernel em uso;
+- **registrado**: o módulo está em `lsmod` e a câmera aparece em `cam -l`;
+- **capturando**: `cam --capture` entrega os dez quadros e não aparecem novos
+  erros `Frame sync`/CSI-2 no journal.
+
+No Galaxy Book4 Ultra testado, os dois primeiros níveis passam, mas o terceiro
+ainda falha. Portanto, enumeração no `libcamera` não deve ser usada como prova
+de que a câmera está funcional.
 
 Se o boot ainda registrar:
 
@@ -198,8 +238,9 @@ external clock 26000000 is not supported
 probe with driver ov02c10 failed with error -22
 ```
 
-então o sistema caiu de volta no driver in-tree. Nesse caso, o check mais útil
-é:
+esse log é compatível com a rejeição de 26 MHz do driver in-tree, mas sozinho
+não prova a origem do módulo. Confirme o caminho e o owner RPM exato com os
+comandos acima. Os checks adicionais mais úteis são:
 
 ```bash
 journalctl -b -u akmods --no-pager
@@ -208,7 +249,7 @@ sed -n '1,260p' /var/cache/akmods/galaxybook-ov02c10/*.failed.log
 
 Se os pacotes estiverem instalados e o `akmods` estiver saudável, mas o
 sistema ainda continuar resolvendo `modinfo -n ov02c10` para o caminho
-`kernel/drivers/...`, o pacote gerado pelo `akmods` provavelmente nao contem o
+`kernel/drivers/...`, o pacote gerado pelo `akmods` provavelmente não contém o
 payload `kmod-galaxybook-ov02c10-<kernel>`. Reinstale a versao corrigida,
 force o `akmods` novamente e confirme que `modinfo -n ov02c10` aponta para um
 caminho externo antes do reboot. A interface grafica tambem expoe esse fluxo
@@ -228,6 +269,12 @@ Compilar o módulo para o kernel em uso:
 
 ```bash
 make build
+```
+
+Executar os testes de contrato do driver, patch, helpers e empacotamento:
+
+```bash
+make test
 ```
 
 Regenerar o patch depois de editar `module/ov02c10.c`:
