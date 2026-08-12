@@ -66,22 +66,16 @@ if [[ "$EUID" -eq 0 ]]; then
 	[[ "$(stat -c '%u:%g:%a' "$state_root")" == "0:0:755" ]]
 	[[ "$(stat -c '%u:%g:%a' "${state_root}/pending")" == "0:0:755" ]]
 
-	real_stat_command="$stat_command"
-	fake_unsafe_ancestry_stat() {
-		if [[ "${*: -1}" == "/var/lib" && "$*" == *"%u:%g"* ]]; then
-			printf '0:1\n'
-			return 0
-		fi
-		"$real_stat_command" "$@"
-	}
-	stat_command=fake_unsafe_ancestry_stat
+	unsafe_ancestry="${test_root}/unsafe-ancestry"
+	mkdir -m 0775 "$unsafe_ancestry"
+	state_directory_ancestry=(/var "$unsafe_ancestry")
 	state_root="${test_root}/rejected-state"
 	if ensure_state_directory >/dev/null 2>&1; then
-		printf 'state directory accepted unsafe /var/lib ancestry metadata\n' >&2
+		printf 'state directory accepted unsafe ancestry metadata\n' >&2
 		exit 1
 	fi
 	[[ ! -e "$state_root" ]]
-	stat_command="$real_stat_command"
+	state_directory_ancestry=(/var /var/lib)
 	state_root="${test_root}/state"
 fi
 

@@ -81,6 +81,12 @@ rg -Fq 'migrate_command="${script_dir}/migrate-legacy-config"' \
 	scripts/finalize-kernel.sh || fail "finalizer does not use the installed migration helper name"
 rg -Fq 'cleanup_command="${script_dir}/cleanup-stale-modules"' \
 	scripts/finalize-kernel.sh || fail "finalizer does not use the installed cleanup helper name"
+rg -Fq '/usr/libexec/galaxybook-ov02c10/state-directory.sh' "$expanded_spec" || \
+	fail "expanded package lost the shared state-directory validator"
+for state_consumer in scripts/queue-finalization.sh scripts/finalize-pending.sh; do
+	rg -Fq 'source "${script_dir}/state-directory.sh"' "$state_consumer" || \
+		fail "${state_consumer} does not source the installed state validator"
+done
 rg -q 'validate_replacement.*"\$migrate_command".*"\$cleanup_command".*finalize_kernel' < <(
 	tr '\n' ' ' < scripts/finalize-kernel.sh
 ) || fail "public finalizer lost validate-before-mutation lifecycle ordering"

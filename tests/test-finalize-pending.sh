@@ -12,6 +12,7 @@ kernel="7.1.8-test.x86_64"
 state_root="${test_root}/state"
 pending_dir="${state_root}/pending"
 mkdir -p "$pending_dir"
+chmod 0755 "$state_root" "$pending_dir"
 
 write_marker() {
 	local request="$1"
@@ -63,6 +64,64 @@ if process_pending >/dev/null 2>&1; then
 	exit 1
 fi
 [[ -e "${pending_dir}/${kernel}.pending" ]]
+
+if [[ "$EUID" -eq 0 ]]; then
+	unsafe_finalize_calls="$finalize_calls"
+	chmod 0777 "$pending_dir"
+	if process_pending >/dev/null 2>&1; then
+		printf 'pending worker accepted a world-writable pending directory\n' >&2
+		exit 1
+	fi
+	chmod 0755 "$pending_dir"
+
+	chgrp 1 "$pending_dir"
+	if process_pending >/dev/null 2>&1; then
+		printf 'pending worker accepted pending directory with wrong owner\n' >&2
+		exit 1
+	fi
+	chgrp 0 "$pending_dir"
+
+	chmod 2755 "$pending_dir"
+	if process_pending >/dev/null 2>&1; then
+		printf 'pending worker accepted pending directory with special mode\n' >&2
+		exit 1
+	fi
+	chmod 00755 "$pending_dir"
+
+	real_state_root="$state_root"
+	mv "$state_root" "${state_root}.regular"
+	ln -s "${state_root}.regular" "$state_root"
+	if process_pending >/dev/null 2>&1; then
+		printf 'pending worker accepted a state-root symlink\n' >&2
+		exit 1
+	fi
+	unlink "$state_root"
+	mv "${state_root}.regular" "$state_root"
+	state_root="$real_state_root"
+
+	ancestry_root="${test_root}/ancestry"
+	ancestry_var="${ancestry_root}/var"
+	ancestry_lib="${ancestry_var}/lib"
+	mkdir -p "$ancestry_lib"
+	chmod 0755 "$ancestry_root" "$ancestry_var" "$ancestry_lib"
+	state_directory_ancestry=("$ancestry_var" "$ancestry_lib")
+	chmod 0775 "$ancestry_lib"
+	if process_pending >/dev/null 2>&1; then
+		printf 'pending worker accepted a group-writable ancestry directory\n' >&2
+		exit 1
+	fi
+	chmod 0755 "$ancestry_lib"
+	mv "$ancestry_lib" "${ancestry_lib}.regular"
+	ln -s "${ancestry_lib}.regular" "$ancestry_lib"
+	if process_pending >/dev/null 2>&1; then
+		printf 'pending worker accepted an ancestry symlink\n' >&2
+		exit 1
+	fi
+	unlink "$ancestry_lib"
+	mv "${ancestry_lib}.regular" "$ancestry_lib"
+	state_directory_ancestry=(/var /var/lib)
+	[[ "$finalize_calls" -eq "$unsafe_finalize_calls" ]]
+fi
 
 finalize_result=0
 process_pending

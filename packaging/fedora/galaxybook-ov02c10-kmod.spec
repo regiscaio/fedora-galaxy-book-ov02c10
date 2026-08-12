@@ -81,6 +81,8 @@ install -Dm0644 scripts/rpm-read-lock.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/rpm-read-lock.sh
 install -Dm0644 scripts/lifecycle-lock.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/lifecycle-lock.sh
+install -Dm0644 scripts/state-directory.sh \
+  %{buildroot}%{_libexecdir}/%{prjname}/state-directory.sh
 install -Dm0644 data/systemd/galaxybook-ov02c10-finalize.service \
   %{buildroot}%{_unitdir}/galaxybook-ov02c10-finalize.service
 install -Dm0644 data/systemd/galaxybook-ov02c10-finalize.path \
@@ -130,6 +132,7 @@ done
 %{_libexecdir}/%{prjname}/rpm-file-owner.sh
 %{_libexecdir}/%{prjname}/rpm-read-lock.sh
 %{_libexecdir}/%{prjname}/lifecycle-lock.sh
+%{_libexecdir}/%{prjname}/state-directory.sh
 %{_unitdir}/galaxybook-ov02c10-finalize.path
 %{_unitdir}/galaxybook-ov02c10-finalize.service
 %{_unitdir}/galaxybook-ov02c10-finalize.timer

@@ -15,6 +15,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/rpm-read-lock.sh"
 # shellcheck source=lifecycle-lock.sh
 source "${script_dir}/lifecycle-lock.sh"
+# shellcheck source=state-directory.sh
+source "${script_dir}/state-directory.sh"
 
 fail() {
 	printf 'galaxybook-ov02c10: %s\n' "$*" >&2
@@ -40,8 +42,9 @@ process_pending() {
 	local -a markers=()
 	local -a validation_markers=()
 
-	if [[ ! -d "$pending_dir" || -L "$pending_dir" ]]; then
-		fail "durable pending directory is missing or unsafe: ${pending_dir}"
+	state_directory_stat_command="$stat_command"
+	if ! validate_state_hierarchy "$state_root"; then
+		fail "durable finalization state is missing or unsafe: ${state_root}"
 		return 1
 	fi
 

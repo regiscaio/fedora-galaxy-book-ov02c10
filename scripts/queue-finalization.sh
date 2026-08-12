@@ -14,6 +14,10 @@ rm_command="/usr/bin/rm"
 service_unit="galaxybook-ov02c10-finalize.service"
 marker_version="GALAXYBOOK_OV02C10_FINALIZATION_V1"
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=state-directory.sh
+source "${script_dir}/state-directory.sh"
+
 usage() {
 	cat <<'USAGE'
 Usage: queue-finalization --from-rpm-trigger
@@ -42,7 +46,7 @@ validate_kernel_name() {
 
 ensure_state_directory() {
 	local pending_dir="${state_root}/pending"
-	local directory owner mode ancestry
+	local directory
 
 	for directory in "$state_root" "$pending_dir"; do
 		if [[ -L "$directory" ]]; then
@@ -51,19 +55,13 @@ ensure_state_directory() {
 		fi
 	done
 
+	state_directory_stat_command="$stat_command"
+	validate_state_ancestry || {
+		fail "state hierarchy is missing or unsafe"
+		return 1
+	}
+
 	if [[ "$EUID" -eq 0 ]]; then
-		for ancestry in /var /var/lib; do
-			[[ -d "$ancestry" && ! -L "$ancestry" ]] || {
-				fail "state hierarchy is missing or unsafe: ${ancestry}"
-				return 1
-			}
-			owner="$("$stat_command" -c '%u:%g' -- "$ancestry")" || return 1
-			mode="$("$stat_command" -c '%a' -- "$ancestry")" || return 1
-			if [[ "$owner" != "0:0" ]] || (( (8#${mode}) & 8#022 )); then
-				fail "unsafe state hierarchy metadata on ${ancestry}: ${owner} mode ${mode}"
-				return 1
-			fi
-		done
 		"$install_command" -d -o root -g root -m 0755 -- \
 			"$state_root" "$pending_dir" || {
 			fail "could not create durable finalization state under ${state_root}"
@@ -76,23 +74,10 @@ ensure_state_directory() {
 			return 1
 		}
 	fi
-	if [[ ! -d "$state_root" || -L "$state_root" || \
-		! -d "$pending_dir" || -L "$pending_dir" ]]
-	then
-		fail "could not create durable finalization state under ${state_root}"
+	validate_state_hierarchy "$state_root" || {
+		fail "unsafe durable finalization state under ${state_root}"
 		return 1
-	fi
-
-	if [[ "$EUID" -eq 0 ]]; then
-		for directory in "$state_root" "$pending_dir"; do
-			owner="$("$stat_command" -c '%u:%g' -- "$directory")" || return 1
-			mode="$("$stat_command" -c '%a' -- "$directory")" || return 1
-			if [[ "$owner" != "0:0" || "$mode" != "755" ]]; then
-				fail "unsafe state directory metadata on ${directory}: ${owner} mode ${mode}"
-				return 1
-			fi
-		done
-	fi
+	}
 }
 
 queue_marker() {
