@@ -20,6 +20,9 @@ dracut_args=()
 migrate_calls=0
 cleanup_args=()
 owner_mode="expected"
+common_evr_mode="expected"
+fake_payload_evr="0:1.00.25-1.fc44"
+fake_common_evr="0:1.00.25-1.fc44"
 fake_name="ov02c10"
 fake_vermagic_kernel="$kernel"
 fake_resolved_module="${expected_dir}/ov02c10.ko.xz"
@@ -49,6 +52,30 @@ fake_rpm() {
 			return 1
 			;;
 	esac
+}
+
+rpm_file_owner_evr() {
+	rpm_file_owner_result=""
+	rpm_file_owner_evr_result=""
+	case "$owner_mode" in
+		expected)
+			rpm_file_owner_result="kmod-galaxybook-ov02c10-${kernel}"
+			rpm_file_owner_evr_result="$fake_payload_evr"
+			;;
+		wrong)
+			rpm_file_owner_result="unrelated-kmod"
+			rpm_file_owner_evr_result="$fake_payload_evr"
+			;;
+		unowned) return 1 ;;
+		error) return 2 ;;
+	esac
+}
+
+rpm_package_evr() {
+	[[ "$1" == galaxybook-ov02c10-kmod-common ]] || return 2
+	rpm_package_evr_result=""
+	[[ "$common_evr_mode" == expected ]] || return 2
+	rpm_package_evr_result="$fake_common_evr"
 }
 
 fake_modinfo() {
@@ -193,6 +220,16 @@ fi
 assert_legacy_preserved
 
 owner_mode="expected"
+fake_payload_evr="0:1.00.24-1.fc44"
+if reconcile_kernel "$kernel" >/dev/null 2>&1; then
+	printf 'finalize-kernel accepted a payload older than the common package\n' >&2
+	exit 1
+fi
+[[ "${#depmod_args[@]}" -eq 0 ]]
+[[ "$migrate_calls" -eq 0 && "${#cleanup_args[@]}" -eq 0 ]]
+assert_legacy_preserved
+
+fake_payload_evr="$fake_common_evr"
 fake_name="not-ov02c10"
 if reconcile_kernel "$kernel" >/dev/null 2>&1; then
 	printf 'finalize-kernel accepted the wrong module name\n' >&2

@@ -4,6 +4,7 @@
 %global source_date_epoch_from_changelog 0
 %global clamp_mtime_to_source_date_epoch 1
 %{!?_depmoddir:%global _depmoddir %{_prefix}/lib/depmod.d}
+%global finalizer_interpreter /usr/bin/env -i PATH=/usr/bin:/usr/sbin GALAXYBOOK_FINALIZER_FAMILY=ov02c10 GALAXYBOOK_FINALIZER_COMMON_PACKAGE=galaxybook-ov02c10-kmod-common GALAXYBOOK_FINALIZER_OWN_FLOOR=0:1.00.25-0 GALAXYBOOK_FINALIZER_PEER_PACKAGE=galaxybook-max98390-kmod-common GALAXYBOOK_FINALIZER_PEER_FLOOR=0:1.00.12-0 GALAXYBOOK_FINALIZER_SETUP_PACKAGE=galaxybook-setup GALAXYBOOK_FINALIZER_SETUP_FLOOR=0:1.00.48-0 GALAXYBOOK_FINALIZER_ACTIVATOR_UNITS=galaxybook-ov02c10-finalize.path:galaxybook-ov02c10-finalize.timer GALAXYBOOK_FINALIZER_DEPENDENT_UNITS=- GALAXYBOOK_FINALIZER_SERVICE_UNIT=galaxybook-ov02c10-finalize.service GALAXYBOOK_FINALIZER_PENDING_DIRECTORY=/var/lib/galaxybook-ov02c10/pending GALAXYBOOK_FINALIZER_RECOVERY_UNIT=galaxybook-ov02c10-finalizer-transaction-recovery.service GALAXYBOOK_FINALIZER_STATE_DIRECTORY=/run/galaxybook-ov02c10-finalizer-transaction GALAXYBOOK_FINALIZER_SERVICE_CGROUP=/sys/fs/cgroup/system.slice/galaxybook-ov02c10-finalize.service/cgroup.procs /usr/bin/bash --noprofile --norc
 
 Name:           %{prjname}-kmod
 Version:        %{pkg_version}
@@ -12,17 +13,26 @@ Summary:        Intel IPU6-aligned OV02C10 camera driver for Samsung Galaxy Book
 License:        GPL-2.0-only
 URL:            https://github.com/regiscaio/fedora-galaxy-book-ov02c10
 Source0:        %{name}-%{version}.tar.gz
+Source1:        kmodtool-queue-only-filter.sh
+Source2:        finalizer-transaction.sh
+Source3:        finalizer-transaction-pretrans.sh
 
 ExclusiveArch:  x86_64
 
 BuildRequires:  akmods
+BuildRequires:  bash
+BuildRequires:  coreutils
+BuildRequires:  diffutils
 BuildRequires:  elfutils-libelf-devel
 BuildRequires:  gcc
 BuildRequires:  kmodtool
 BuildRequires:  make
 BuildRequires:  systemd-rpm-macros
 
-%{expand:%(kmodtool --target %{_target_cpu} --repo fedora --kmodname %{prjname} --akmod %{?kernels:--for-kernels "%{?kernels}"} 2>/dev/null)}
+%undefine kmodtool_queue_only_filter_ok
+%{expand:%(/usr/bin/bash "%{SOURCE1}" --expected-kernels "%{?kernels}" -- /usr/bin/kmodtool --target %{_target_cpu} --repo fedora --kmodname %{prjname} --akmod %{?kernels:--for-kernels "%{?kernels}"})}
+%{!?kmodtool_queue_only_filter_ok:%{error:kmodtool queue-only filtering failed}}
+%undefine kmodtool_queue_only_filter_ok
 
 %description
 This package carries the OV02C10 sensor driver aligned with the Intel IPU6
@@ -41,6 +51,15 @@ Requires:       kmod
 Requires:       rpm
 Requires:       systemd
 Requires:       util-linux-core
+Requires:       (galaxybook-max98390-kmod-common >= 1.00.12 if galaxybook-max98390-kmod-common)
+Requires:       (galaxybook-setup >= 1.00.48 if galaxybook-setup)
+Requires(pretrans): bash
+Requires(pretrans): coreutils
+Requires(pretrans): diffutils
+Requires(pretrans): rpm
+Requires(pretrans): systemd
+Requires(pretrans): util-linux-core
+Requires(posttrans): diffutils
 %{?systemd_requires}
 
 %description -n %{pkg_kmod_name}-common
@@ -69,6 +88,8 @@ install -Dm0755 scripts/finalize-kernel.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/finalize-kernel
 install -Dm0755 scripts/finalize-pending.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/finalize-pending
+install -Dm0755 %{SOURCE2} \
+  %{buildroot}%{_libexecdir}/%{prjname}/finalizer-transaction
 install -Dm0755 scripts/migrate-legacy-config.sh \
   %{buildroot}%{_libexecdir}/%{prjname}/migrate-legacy-config
 install -Dm0755 scripts/cleanup-stale-modules.sh \
@@ -108,14 +129,17 @@ done
 %post -n %{pkg_kmod_name}-common
 %systemd_post galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
 
+%pretrans -n %{pkg_kmod_name}-common -p "%{finalizer_interpreter}" -f %{SOURCE3}
+
 %preun -n %{pkg_kmod_name}-common
 %systemd_preun galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
 
 %postun -n %{pkg_kmod_name}-common
 %systemd_postun galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
 
-%posttrans -n %{pkg_kmod_name}-common
+%posttrans -n %{pkg_kmod_name}-common -p "%{finalizer_interpreter}"
 %{_libexecdir}/%{prjname}/queue-finalization --migration
+%{_libexecdir}/%{prjname}/finalizer-transaction --posttrans "$1"
 
 %transfiletriggerin -n %{pkg_kmod_name}-common -p /usr/bin/bash -- /lib/modules /usr/lib/modules
 %{_libexecdir}/%{prjname}/queue-finalization --from-rpm-trigger
@@ -129,6 +153,7 @@ done
 %{_libexecdir}/%{prjname}/cleanup-stale-modules
 %{_libexecdir}/%{prjname}/finalize-kernel
 %{_libexecdir}/%{prjname}/finalize-pending
+%{_libexecdir}/%{prjname}/finalizer-transaction
 %{_libexecdir}/%{prjname}/migrate-legacy-config
 %{_libexecdir}/%{prjname}/queue-finalization
 %{_libexecdir}/%{prjname}/rpm-file-owner.sh

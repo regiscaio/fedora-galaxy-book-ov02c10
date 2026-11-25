@@ -166,6 +166,29 @@ archivos en la misma transacción (`common`, `akmod` y `kmod`). Un metapaquete
 `kmod-galaxybook-ov02c10` antiguo puede fijar la versión previa del `akmod`
 por dependencia exacta y hacer que `dnf` ignore la actualización del driver.
 
+OV02C10 `1.00.25` coordina transacciones solo con
+`galaxybook-max98390-kmod-common` `1.00.12` o posterior y
+`galaxybook-setup` `1.00.48` o posterior cuando esos paquetes ya están
+instalados. Actualiza el conjunto en una sola operación; las dependencias
+condicionales no instalan automáticamente un componente ausente.
+
+La migración inicial desde la línea pública legacy solo se admite mediante el
+procedimiento DNF en línea, con systemd activo. No reinicies hasta que terminen
+la recuperación y la reconciliación. Una actualización inicial en un chroot o
+una imagen sin conexión no aplica el estado de los nuevos activadores; después,
+ejecuta el procedimiento completo en línea antes de considerar armados la
+unidad path y el temporizador. Las máscaras administrativas preexistentes no se
+eliminan: la migración falla de forma cerrada para que el administrador pueda
+conservar o revisar esa política.
+
+El worker también exige que el kmod específico del kernel y el paquete
+`common` tengan el mismo EVR. Si el `common` nuevo llega antes que su kmod, la
+cola permanece durable y no se publica ningún `depmod`, initramfs ni estado
+`ready` para el payload anterior. Una instalación pública legacy sin worker
+permanece sin worker después del rollback. Un preview transaccional anterior
+con worker queda enmascarado y adoptable hasta que una nueva transacción
+compatible complete la recuperación.
+
 El paquete común instala dos configuraciones importantes:
 
 - un `softdep` para preferir `ov02c10` antes de `intel_ipu6_isys`;
@@ -232,29 +255,23 @@ un replacement externo, perteneciente al RPM esperado y con vermagic correcto.
 El módulo in-tree de Fedora y los módulos empaquetados por Intel IPU6 permanecen
 intactos.
 
-Limitación deliberada: quitar solo el kmod binario todavía no reconstruye el
-initramfs automáticamente. `transfiletriggerpostun` no entrega las rutas
-eliminadas y el paquete común que contiene el worker puede quitarse en la misma
-transacción; una cola parcial no sería segura. Antes de quitar el paquete
-común, elimina el kmod específico y reconstruye ese kernel explícitamente:
+Los `%post` y `%postun` que `kmodtool` genera normalmente para cada kmod
+binario son no-ops explícitos: no ejecutan `depmod` ni intentan adquirir el
+mutex global mientras RPM mantiene su propio lock. Durante la instalación,
+el `transfiletriggerin` anterior solo encola el trabajo para que el worker lo
+ejecute después de la transacción. Durante la eliminación, `%postun` sigue
+siendo un no-op deliberadamente y se aplica la limitación manual siguiente.
 
-```bash
-kernel="<versión-exacta-del-kernel>"
-sudo /usr/bin/bash -c '
-  set -euo pipefail
-  source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh
-  acquire_kmod_lifecycle_lock
-  /usr/bin/dnf remove "kmod-galaxybook-ov02c10-$1"
-  /usr/bin/depmod -a "$1"
-  /usr/bin/dracut --force --kver "$1"
-' bash "$kernel"
-```
-
-Confirma con `lsinitrd --kver "$kernel"` que la ruta externa
-`extra/galaxybook-ov02c10` no permanezca antes del próximo arranque.
-Este procedimiento mantiene el mismo mutex global desde la eliminación RPM
-hasta la reconstrucción y evita una carrera con el mantenimiento de otro
-driver.
+Limitación deliberada: la eliminación exacta del kmod binario **no está
+soportada automáticamente en esta versión**. `transfiletriggerpostun` no
+entrega las rutas eliminadas, `%postun` es deliberadamente un no-op y el paquete
+común que contiene el worker podría salir en la misma transacción. Mantén
+instalado el paquete común y no consideres una secuencia manual de `dnf`,
+`depmod` y `dracut` como una eliminación coordinada. Una futura API perteneciente
+al paquete deberá validar la ausencia del módulo y los marcadores
+pendientes/listos, ejecutar la transacción y después mantener, en este orden,
+el mutex global, el lock privado y el read lock compartido de RPM durante toda
+la reconciliación posterior a la transacción.
 
 ### Validación después de instalar
 

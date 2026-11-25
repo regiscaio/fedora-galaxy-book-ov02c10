@@ -162,6 +162,27 @@ arquivos na mesma transação (`common`, `akmod` e `kmod`). Um metapacote
 `kmod-galaxybook-ov02c10` antigo pode manter a versão anterior do `akmod`
 presa por dependência exata e fazer o `dnf` ignorar a atualização do driver.
 
+O OV02C10 `1.00.25` coordena transações apenas com
+`galaxybook-max98390-kmod-common` `1.00.12` ou superior e
+`galaxybook-setup` `1.00.48` ou superior, quando esses pacotes já estão
+instalados. Atualize o conjunto na mesma operação; as dependências condicionais
+não instalam automaticamente um componente ausente.
+
+A migração inicial da linha pública legada é suportada somente pelo
+procedimento DNF online, com o systemd ativo. Não reinicie até a recuperação e
+a reconciliação terminarem. Uma atualização inicial em chroot ou imagem
+offline não aplica o estado dos novos ativadores; depois dela, execute o
+procedimento online completo antes de considerar o `path` e o timer armados.
+Máscaras administrativas preexistentes não são removidas: a migração falha de
+forma fechada para que o administrador possa manter ou revisar essa política.
+
+O worker também exige que o kmod exato do kernel e o pacote `common` tenham o
+mesmo EVR. Se o `common` novo chegar antes do kmod correspondente, a fila
+permanece durável e nenhum `depmod`, initramfs ou estado `ready` é publicado
+com o payload antigo. Uma instalação pública legada sem worker permanece sem
+worker após rollback. Já um preview transacional anterior com worker fica
+mascarado e adotável até uma nova transação compatível concluir a recuperação.
+
 O pacote comum instala duas configurações importantes:
 
 - um `softdep` para preferir `ov02c10` antes do `intel_ipu6_isys`;
@@ -227,28 +248,22 @@ remoção se o mesmo kernel ainda não tiver exatamente um replacement externo,
 pertencente ao RPM esperado e com `vermagic` correto. O módulo in-tree do Fedora
 e os módulos empacotados pelo Intel IPU6 permanecem intocados.
 
-Limitação deliberada: remover só o kmod binário ainda não reconstrói o
-initramfs automaticamente. `transfiletriggerpostun` não entrega os caminhos
-removidos, e o pacote comum que possui o worker pode sair na mesma transação;
-uma fila parcial não seria segura. Antes de remover o pacote comum, remova o
-kmod específico e reconstrua explicitamente o initramfs do mesmo kernel:
+Os `%post` e `%postun` gerados pelo `kmodtool` para cada kmod binário são
+no-ops explícitos: não executam `depmod` nem tentam adquirir o mutex global
+enquanto o RPM mantém seu próprio lock. Na instalação, o `transfiletriggerin`
+acima só enfileira o trabalho, que o worker executa depois da transação. Na
+remoção, o `%postun` continua no-op de propósito e vale a limitação manual a
+seguir.
 
-```bash
-kernel="<versão-exata-do-kernel>"
-sudo /usr/bin/bash -c '
-  set -euo pipefail
-  source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh
-  acquire_kmod_lifecycle_lock
-  /usr/bin/dnf remove "kmod-galaxybook-ov02c10-$1"
-  /usr/bin/depmod -a "$1"
-  /usr/bin/dracut --force --kver "$1"
-' bash "$kernel"
-```
-
-Confirme com `lsinitrd --kver "$kernel"` que o caminho externo
-`extra/galaxybook-ov02c10` não permaneceu na imagem antes do próximo boot.
-Esse procedimento mantém o mesmo mutex global desde a remoção RPM até a
-reconstrução e evita corrida com a manutenção de outro driver.
+Limitação deliberada: a remoção exata do kmod binário **não é suportada
+automaticamente nesta versão**. `transfiletriggerpostun` não entrega os
+caminhos removidos, o `%postun` é deliberadamente um no-op e o pacote comum que
+possui o worker poderia sair na mesma transação. Mantenha o pacote comum
+instalado e não use uma sequência manual de `dnf`, `depmod` e `dracut` como se
+ela fosse uma remoção coordenada. Uma futura API pertencente ao pacote deverá
+validar a ausência do módulo e os marcadores pendentes/prontos, executar a
+transação e então manter, nessa ordem, o mutex global, o lock privado e o read
+lock compartilhado do RPM durante toda a reconciliação pós-transação.
 
 ### Validação após a instalação
 

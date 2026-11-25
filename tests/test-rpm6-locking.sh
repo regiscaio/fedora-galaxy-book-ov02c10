@@ -66,6 +66,11 @@ done
 	acquire_rpm_read_lock
 	rpm_file_owner "$payload_path"
 	[[ "$rpm_file_owner_result" == ov02c10-rpm-lock-payload ]]
+	rpm_file_owner_evr "$payload_path"
+	[[ "$rpm_file_owner_result" == ov02c10-rpm-lock-payload ]]
+	[[ "$rpm_file_owner_evr_result" == 0:1-1 ]]
+	rpm_package_evr ov02c10-rpm-lock-payload
+	[[ "$rpm_package_evr_result" == 0:1-1 ]]
 	owner_status=0
 	rpm_file_owner /opt/ov02c10-rpm-lock-test/unowned || owner_status=$?
 	[[ "$owner_status" -eq 1 ]]

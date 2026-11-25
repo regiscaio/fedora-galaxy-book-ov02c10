@@ -168,6 +168,29 @@ stessa transazione (`common`, `akmod` e `kmod`). Un vecchio metapacchetto
 tramite dipendenza esatta e fare sì che `dnf` ignori l'aggiornamento del
 driver.
 
+OV02C10 `1.00.25` coordina le transazioni solo con
+`galaxybook-max98390-kmod-common` `1.00.12` o successivo e
+`galaxybook-setup` `1.00.48` o successivo quando questi pacchetti sono già
+installati. Aggiorna l'insieme in un'unica operazione; le dipendenze
+condizionali non installano automaticamente un componente mancante.
+
+La migrazione iniziale dalla linea pubblica legacy è supportata solo tramite
+la procedura DNF online, con systemd attivo. Non riavviare finché recovery e
+riconciliazione non sono terminate. Un aggiornamento iniziale in chroot o in
+un'immagine offline non applica lo stato dei nuovi attivatori; in seguito,
+esegui la procedura online completa prima di considerare armati la path unit e
+il timer. Le mask amministrative preesistenti non vengono rimosse: la migrazione
+fallisce in modo chiuso affinché l'amministratore possa mantenere o rivedere
+tale policy.
+
+Il worker richiede inoltre che il kmod specifico del kernel e il pacchetto
+`common` abbiano lo stesso EVR. Se il nuovo `common` arriva prima del kmod
+corrispondente, la coda resta durevole e nessun `depmod`, initramfs o stato
+`ready` viene pubblicato con il payload precedente. Un'installazione pubblica
+legacy senza worker rimane senza worker dopo il rollback. Un precedente
+preview transazionale con worker resta mascherato e adottabile finché una nuova
+transazione compatibile non completa il recupero.
+
 Il pacchetto comune installa due configurazioni importanti:
 
 - un `softdep` per preferire `ov02c10` prima di `intel_ipu6_isys`;
@@ -234,29 +257,23 @@ replacement esterno, appartenente all'RPM previsto e con vermagic corretto. Il
 modulo in-tree di Fedora e i moduli pacchettizzati da Intel IPU6 restano
 intatti.
 
-Limitazione deliberata: rimuovere soltanto il kmod binario non ricostruisce
-ancora automaticamente l'initramfs. `transfiletriggerpostun` non fornisce i
-percorsi rimossi e il pacchetto common che possiede il worker può essere
-rimosso nella stessa transazione; una coda parziale non sarebbe sicura. Prima
-di rimuovere il common, rimuovi il kmod specifico e ricostruisci esplicitamente
-quel kernel:
+Le sezioni `%post` e `%postun` normalmente generate da `kmodtool` per ogni
+kmod binario sono no-op espliciti: non eseguono `depmod` né tentano di acquisire
+il mutex globale mentre RPM mantiene il proprio lock. Durante l'installazione,
+il `transfiletriggerin` sopra accoda soltanto il lavoro che il worker esegue
+dopo la transazione. Durante la rimozione, `%postun` resta intenzionalmente un
+no-op e si applica la limitazione manuale seguente.
 
-```bash
-kernel="<release-esatta-del-kernel>"
-sudo /usr/bin/bash -c '
-  set -euo pipefail
-  source /usr/libexec/galaxybook-ov02c10/kmod-lifecycle-lock.sh
-  acquire_kmod_lifecycle_lock
-  /usr/bin/dnf remove "kmod-galaxybook-ov02c10-$1"
-  /usr/bin/depmod -a "$1"
-  /usr/bin/dracut --force --kver "$1"
-' bash "$kernel"
-```
-
-Conferma con `lsinitrd --kver "$kernel"` che il percorso esterno
-`extra/galaxybook-ov02c10` sia assente prima del prossimo boot.
-Questa procedura mantiene lo stesso mutex globale dalla rimozione RPM fino
-alla ricostruzione ed evita una race con la manutenzione di un altro driver.
+Limitazione deliberata: la rimozione esatta del kmod binario **non è supportata
+automaticamente in questa versione**. `transfiletriggerpostun` non fornisce i
+percorsi rimossi, `%postun` è deliberatamente un no-op e il pacchetto common che
+possiede il worker potrebbe uscire nella stessa transazione. Mantieni installato
+il pacchetto common e non considerare una sequenza manuale di `dnf`, `depmod` e
+`dracut` una rimozione coordinata. Una futura API appartenente al pacchetto
+dovrà validare l'assenza del modulo e i marker pending/ready, eseguire la
+transazione e poi mantenere, in quest'ordine, il mutex globale, il lock privato
+e il read lock condiviso di RPM durante l'intera riconciliazione successiva alla
+transazione.
 
 ### Verifica dopo l'installazione
 

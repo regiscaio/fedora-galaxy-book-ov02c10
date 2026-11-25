@@ -8,8 +8,12 @@ SOURCE_DATE_EPOCH := $(shell $(SOURCE_DATE_EPOCH_SCRIPT))
 export SOURCE_DATE_EPOCH
 DIST_DIR := dist
 RPM_SPEC := packaging/fedora/$(PACKAGE_NAME).spec
+KMODTOOL_FILTER := scripts/kmodtool-queue-only-filter.sh
+FINALIZER_TRANSACTION := scripts/finalizer-transaction.sh
+FINALIZER_TRANSACTION_PRETRANS := finalizer-transaction-pretrans.sh
 RPMBUILD_DIR := .rpmbuild
 GENERATED_SPEC := $(RPMBUILD_DIR)/SPECS/$(PACKAGE_NAME).spec
+GENERATED_PRETRANS := $(RPMBUILD_DIR)/SOURCES/$(FINALIZER_TRANSACTION_PRETRANS)
 TAR_REPRO_FLAGS := --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" --owner=0 --group=0 --numeric-owner
 
 .PHONY: help build test clean cleanup-stale-modules cleanup-stale-modules-apply export-patch refresh-base dist srpm rpm
@@ -60,18 +64,25 @@ dist: clean export-patch
 		-czf $(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz \
 		.
 
-$(GENERATED_SPEC): $(RPM_SPEC)
+$(GENERATED_SPEC): $(RPM_SPEC) $(KMODTOOL_FILTER) $(FINALIZER_TRANSACTION)
 	mkdir -p "$(dir $@)"
 	sed \
 		-e 's/^Version:[[:space:]].*/Version:        $(VERSION)/' \
 		-e 's/^Release:[[:space:]].*/Release:        1%{?dist}/' \
 		"$<" > "$@"
 
+$(GENERATED_PRETRANS): $(FINALIZER_TRANSACTION)
+	mkdir -p "$(dir $@)"
+	sed 's/%/%%/g' "$<" > "$@"
+
 srpm: dist
 	@set -euo pipefail; \
 	rm -rf "$(RPMBUILD_DIR)"; \
 	mkdir -p "$(RPMBUILD_DIR)"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}; \
 	cp "$(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz" "$(RPMBUILD_DIR)/SOURCES/"; \
+	cp "$(KMODTOOL_FILTER)" "$(RPMBUILD_DIR)/SOURCES/"; \
+	cp "$(FINALIZER_TRANSACTION)" "$(RPMBUILD_DIR)/SOURCES/"; \
+	$(MAKE) "$(GENERATED_PRETRANS)"; \
 	$(MAKE) "$(GENERATED_SPEC)"; \
 	rpmbuild -bs "$(GENERATED_SPEC)" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)"; \
 	cp "$(RPMBUILD_DIR)"/SRPMS/*.src.rpm "$(DIST_DIR)/"
@@ -81,6 +92,9 @@ rpm: dist
 	rm -rf "$(RPMBUILD_DIR)"; \
 	mkdir -p "$(RPMBUILD_DIR)"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}; \
 	cp "$(DIST_DIR)/$(PACKAGE_NAME)-$(VERSION).tar.gz" "$(RPMBUILD_DIR)/SOURCES/"; \
+	cp "$(KMODTOOL_FILTER)" "$(RPMBUILD_DIR)/SOURCES/"; \
+	cp "$(FINALIZER_TRANSACTION)" "$(RPMBUILD_DIR)/SOURCES/"; \
+	$(MAKE) "$(GENERATED_PRETRANS)"; \
 	$(MAKE) "$(GENERATED_SPEC)"; \
 	rpmbuild -ba "$(GENERATED_SPEC)" --define "_topdir $$(pwd)/$(RPMBUILD_DIR)"; \
 	cp "$(RPMBUILD_DIR)"/SRPMS/*.src.rpm "$(DIST_DIR)/"; \

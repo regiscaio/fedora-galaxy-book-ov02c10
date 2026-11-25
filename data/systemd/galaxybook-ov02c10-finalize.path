@@ -4,7 +4,7 @@ Documentation=https://github.com/regiscaio/fedora-galaxy-book-ov02c10
 After=local-fs.target
 
 [Path]
-PathChanged=/var/lib/galaxybook-ov02c10/pending
+PathExistsGlob=/var/lib/galaxybook-ov02c10/pending/*.pending
 MakeDirectory=true
 Unit=galaxybook-ov02c10-finalize.service
 

@@ -37,10 +37,10 @@ Usage: finalize-kernel --kernel KERNEL
 Reconcile and finalize an installed Galaxy Book OV02C10 module for one kernel.
 Under the cross-driver exclusive lock, this driver's exclusive lifecycle lock,
 and one shared RPM transaction lock, the command first validates RPM ownership,
-module name and vermagic, then migrates exact legacy configuration, cleans safe
-unowned module shadows, refreshes that kernel's dependency index, rebuilds the
-same kernel's initramfs, and verifies that it contains the external module
-rather than an in-tree copy.
+exact owner/common EVR parity, module name and vermagic, then migrates exact
+legacy configuration, cleans safe unowned module shadows, refreshes that
+kernel's dependency index, rebuilds the same kernel's initramfs, and verifies
+that it contains the external module rather than an in-tree copy.
 USAGE
 }
 
@@ -234,8 +234,9 @@ publish_readiness_attestation() {
 
 validate_replacement() {
 	local kernel="$1"
-	local expected_dir expected_owner candidate payload
-	local payload_owner payload_name payload_vermagic vermagic_kernel owner_status
+	local expected_dir expected_owner expected_common candidate payload
+	local payload_owner payload_owner_evr common_evr
+	local payload_name payload_vermagic vermagic_kernel owner_status
 	local -a payloads=()
 
 	validate_kernel_name "$kernel" || return 1
@@ -261,8 +262,10 @@ validate_replacement() {
 	fi
 	payload="${payloads[0]}"
 	expected_owner="kmod-galaxybook-ov02c10-${kernel}"
-	if rpm_file_owner "$payload"; then
+	expected_common="galaxybook-ov02c10-kmod-common"
+	if rpm_file_owner_evr "$payload"; then
 		payload_owner="$rpm_file_owner_result"
+		payload_owner_evr="$rpm_file_owner_evr_result"
 	else
 		owner_status=$?
 		if [[ "$owner_status" -eq 1 ]]; then
@@ -272,6 +275,15 @@ validate_replacement() {
 	fi
 	if [[ "$payload_owner" != "$expected_owner" ]]; then
 		fail "external OV02C10 payload for ${kernel} is owned by ${payload_owner}, expected ${expected_owner}"
+		return 1
+	fi
+	if ! rpm_package_evr "$expected_common"; then
+		fail "could not validate the installed ${expected_common} EVR"
+		return 1
+	fi
+	common_evr="$rpm_package_evr_result"
+	if [[ "$payload_owner_evr" != "$common_evr" ]]; then
+		fail "external OV02C10 payload EVR ${payload_owner_evr} does not match ${expected_common} EVR ${common_evr}"
 		return 1
 	fi
 	if ! payload_name="$("$modinfo_command" -F name -- "$payload")"; then
