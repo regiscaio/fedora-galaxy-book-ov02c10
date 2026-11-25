@@ -28,9 +28,15 @@ for filter_build_requirement in bash coreutils diffutils kmodtool; do
 		packaging/fedora/galaxybook-ov02c10-kmod.spec || \
 		fail "missing filter BuildRequires: ${filter_build_requirement}"
 done
-rg -Fq '%{!?kmodtool_queue_only_filter_ok:%{error:kmodtool queue-only filtering failed}}' \
+rg -Fq '%{error:kmodtool queue-only filtering failed}' \
 	packaging/fedora/galaxybook-ov02c10-kmod.spec || \
 	fail "spec does not fail closed when kmodtool filtering fails"
+rg -Fq '%{?kernels:%{error:kmodtool is required to generate a source RPM with explicit kernels}}' \
+	packaging/fedora/galaxybook-ov02c10-kmod.spec || \
+	fail "source-only fallback accepts an unverifiable explicit kernel list"
+[[ "$(rg -cF "kmodtool queue-only filtering was deferred; refusing an unverified binary build" \
+	packaging/fedora/galaxybook-ov02c10-kmod.spec)" -eq 2 ]] || \
+	fail "unverified build guard must protect both prep and build stages"
 rg -Fq 'cp "$(KMODTOOL_FILTER)" "$(RPMBUILD_DIR)/SOURCES/"' Makefile || \
 	fail "RPM build does not stage the kmodtool filter"
 rg -q '^Source2:[[:space:]]+finalizer-transaction\.sh$' \

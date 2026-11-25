@@ -24,8 +24,8 @@ common_rpm="$1"
 [[ -f "$common_rpm" ]] || fail "RPM does not exist: ${common_rpm}"
 [[ "$(rpm -qp --qf '%{NAME}\n' -- "$common_rpm")" == \
 	galaxybook-ov02c10-kmod-common ]] || fail 'not the OV02C10 common RPM'
-[[ "$(rpm -qp --qf '%{VERSION}\n' -- "$common_rpm")" == 1.00.25 ]] || \
-	fail 'common RPM is not release 1.00.25'
+[[ "$(rpm -qp --qf '%{VERSION}\n' -- "$common_rpm")" == 1.00.26 ]] || \
+	fail 'common RPM is not release 1.00.26'
 [[ ! -e /run/systemd/system ]] || \
 	fail 'ephemeral test container unexpectedly exposes a running systemd runtime'
 
@@ -86,8 +86,8 @@ then
 	fail 'rendered transaction scriptlet reported an ABI or CLI failure'
 fi
 
-[[ "$(rpm -q --qf '%{VERSION}\n' galaxybook-ov02c10-kmod-common)" == 1.00.25 ]] || \
-	fail 'rendered upgrade did not install common 1.00.25'
+[[ "$(rpm -q --qf '%{VERSION}\n' galaxybook-ov02c10-kmod-common)" == 1.00.26 ]] || \
+	fail 'rendered upgrade did not install common 1.00.26'
 [[ ! -e /etc/modules-load.d/galaxybook-ov02c10.conf ]] || \
 	fail 'rendered upgrade retained the package-owned legacy modules-load rule'
 marker=/var/lib/galaxybook-ov02c10/migration.pending

@@ -11,6 +11,7 @@ for test_script in \
 	"${repo_root}/tests/test-finalizer-transaction.sh" \
 	"${repo_root}/tests/test-kmod-lifecycle-lock.sh" \
 	"${repo_root}/tests/test-kmodtool-queue-only-filter.sh" \
+	"${repo_root}/tests/test_srpm_bootstrap.sh" \
 	"${repo_root}/tests/test-mixed-version-solver.sh" \
 	"${repo_root}/tests/test-rpm-read-lock.sh" \
 	"${repo_root}/tests/test-lifecycle-lock.sh" \

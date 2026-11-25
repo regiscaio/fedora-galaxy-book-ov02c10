@@ -29,10 +29,29 @@ BuildRequires:  kmodtool
 BuildRequires:  make
 BuildRequires:  systemd-rpm-macros
 
-%undefine kmodtool_queue_only_filter_ok
+%global kmodtool_queue_only_build_verified 0
+%global kmodtool_queue_only_filter_deferred 0
+%if %{exists:/usr/bin/kmodtool}
+%global kmodtool_queue_only_filter_ok 0
 %{expand:%(/usr/bin/bash "%{SOURCE1}" --expected-kernels "%{?kernels}" -- /usr/bin/kmodtool --target %{_target_cpu} --repo fedora --kmodname %{prjname} --akmod %{?kernels:--for-kernels "%{?kernels}"})}
-%{!?kmodtool_queue_only_filter_ok:%{error:kmodtool queue-only filtering failed}}
+%if %{kmodtool_queue_only_filter_ok} != 1
+%{error:kmodtool queue-only filtering failed}
+%endif
+%global kmodtool_queue_only_build_verified 1
 %undefine kmodtool_queue_only_filter_ok
+%else
+# The initial COPR source-package chroot has rpm-build but has not installed
+# BuildRequires yet.  Define only the names needed to parse an SRPM.  Rebuilding
+# that SRPM installs kmodtool, reparses this spec, and must take the verified
+# branch above before any binary stage is allowed to run.
+%{?kernels:%{error:kmodtool is required to generate a source RPM with explicit kernels}}
+%global kmod_pkg_name kmod-%{prjname}
+%global pkg_kmod_name %{prjname}-kmod
+%global kmodinstdir_prefix /lib/modules/
+%global kmodinstdir_postfix /extra/%{prjname}/
+%global kernel_versions %{nil}
+%global kmodtool_queue_only_filter_deferred 1
+%endif
 
 %description
 This package carries the OV02C10 sensor driver aligned with the Intel IPU6
@@ -67,9 +86,17 @@ Common documentation and licensing files for the %{prjname} kernel module
 packaging.
 
 %prep
+%if %{kmodtool_queue_only_build_verified} != 1 || %{kmodtool_queue_only_filter_deferred} != 0
+printf '%s\n' 'kmodtool queue-only filtering was deferred; refusing an unverified binary build' >&2
+exit 65
+%endif
 %setup -q -n %{name}-%{version}
 
 %build
+%if %{kmodtool_queue_only_build_verified} != 1 || %{kmodtool_queue_only_filter_deferred} != 0
+printf '%s\n' 'kmodtool queue-only filtering was deferred; refusing an unverified binary build' >&2
+exit 65
+%endif
 for kernel_version in %{?kernel_versions}; do
   cp -a module _kmod_build_${kernel_version%%___*}
   make -C ${kernel_version##*___} M=${PWD}/_kmod_build_${kernel_version%%___*} modules
