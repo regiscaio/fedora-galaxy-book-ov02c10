@@ -35,23 +35,20 @@ system.
 
 ## Current status
 
-In the state validated in August 2026, the packaging installs the external
-module, gives it priority over the in-tree copy, registers the sensor in the
-IPU6 graph, and lets `libcamera` enumerate the camera. This proves
-**installation and registration**, not stable capture.
+In August 2026 the external module registered the sensor in the IPU6 graph
+and `libcamera` listed the camera, but capture delivered no frames. The
+journal reported `csi2-4 error: Frame sync error`.
 
-Capture on the Galaxy Book4 Ultra still delivers no frames and reports
-`csi2-4 error: Frame sync error`. The machine supplies a 26 MHz external clock,
-but neither the [Linux v7.1 driver](https://github.com/torvalds/linux/blob/v7.1/drivers/media/i2c/ov02c10.c)
-nor the [Intel IPU6 base](https://github.com/intel/ipu6-drivers/blob/master/drivers/media/i2c/ov02c10.c)
-provides a validated 26 MHz PLL sequence that keeps the link at 400 MHz. The
-[Intel clock discussion](https://github.com/intel/ipu6-drivers/issues/171)
-also identifies that register sequence as the missing piece.
+The new timing adjustment applies only to a Samsung Galaxy Book4 Ultra
+`960XGL` with DMI board `NP960XGL-XG1BR`, a **26 MHz** sensor clock and two
+CSI-2 lanes. For the nominal 400 MHz mode, the driver now reports the actual
+link frequency of **541666666 Hz** and **216666666 pixels/s**; the default
+VTS is **3152 lines**. It does not reprogram the PLL or change the IPU6
+bridge. Other boards, clocks and lane counts retain their previous timing.
 
-This project therefore **does not claim that the camera works** on this
-hardware. It fixes installation, probing, and metadata without inventing PLL
-registers. Browser and WebRTC exposure remains in `Galaxy Book Setup`, but no
-userspace bridge can fix the physical synchronization error.
+On October 21, [4nrry measured 30.08 fps on this board model](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/123#issuecomment-6319696718)
+using another driver with these timings. This is not a capture result for
+this Fedora package: use the ten-frame test below to verify it locally.
 
 ## What this repository provides
 
@@ -99,11 +96,9 @@ The current downstream delta is intentionally small:
 - it validates power-management resources and SSDB data, reports probe defers
   through the appropriate API, and publishes firmware orientation/rotation
   controls;
-- it corrects two-lane mode metadata to `pixel_rate=160 MHz` and `HTS=2280`,
-  preserving line time while producing a valid `HBLANK` value.
-
-That timing correction is metadata-only: it does not change the sensor PLL
-table and does not, by itself, solve the `Frame sync error` seen with 26 MHz.
+- it keeps `HTS=2280` in two-lane mode. The nominal rate at 19.2 MHz is
+  160 million pixels/s; only the 26 MHz configuration described above changes
+  the reported rates and the default frame length.
 
 Rebasing on the Intel IPU6 base was a deliberate decision: the old module,
 although it solved sensor probing, had drifted too far from the Fedora 44
@@ -278,8 +273,9 @@ modinfo -n ov02c10
 rpm -qf "$(modinfo -n ov02c10)"
 lsmod | grep '^ov02c10 '
 cam -l
-cam -c 1 --capture=10
-journalctl -b -k | grep -Ei 'ov02c10|frame sync|csi2'
+capture_start=$(date --iso-8601=seconds)
+timeout 15s cam -c 1 --capture=10
+journalctl -b -k --since "$capture_start" | grep -Ei 'ov02c10|frame sync|csi2'
 ```
 
 The three levels mean:
@@ -289,12 +285,13 @@ The three levels mean:
   the kmod for the running kernel;
 - **registered**: the module is present in `lsmod`, and the camera appears in
   `cam -l`;
-- **capturing**: `cam --capture` delivers all ten frames, and no new
-  `Frame sync`/CSI-2 errors appear in the journal.
+- **capturing**: choose the internal camera's number from `cam -l` (the example
+  uses `1`). The test must complete with ten frames, each with `bytesused > 0`.
+  It does not save images; omit `--file`.
 
-On the tested Galaxy Book4 Ultra, the first two levels pass but the third still
-fails. `libcamera` enumeration must therefore not be used as proof that the
-camera works.
+A single sync warning at stream start is not evidence of a dropped frame.
+Repeated errors during streaming, empty buffers or a timeout do not count as
+a successful test.
 
 If boot still shows:
 
@@ -304,8 +301,9 @@ probe with driver ov02c10 failed with error -22
 ```
 
 that log is consistent with the in-tree driver's 26 MHz rejection, but it is
-not provenance proof by itself. Confirm the path and exact RPM owner with the
-commands above. The most useful additional checks are:
+not provenance proof by itself. `modinfo -n` and `rpm -qf` identify the file
+on disk, not the module in memory. If the RPM was installed after boot, the
+kernel may still be using the previous copy. Additional checks:
 
 ```bash
 journalctl -b -u akmods --no-pager

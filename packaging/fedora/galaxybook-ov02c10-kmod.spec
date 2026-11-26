@@ -21,6 +21,7 @@ ExclusiveArch:  x86_64
 
 BuildRequires:  akmods
 BuildRequires:  bash
+BuildRequires:  /usr/bin/awk
 BuildRequires:  coreutils
 BuildRequires:  diffutils
 BuildRequires:  elfutils-libelf-devel
@@ -62,6 +63,7 @@ module stays in sync with the installed Intel IPU6 userspace and kernel stack.
 %package -n %{pkg_kmod_name}-common
 Summary:        Common files for the %{prjname} kernel module packaging
 Requires:       bash
+Requires:       /usr/bin/awk
 Requires:       coreutils
 Requires:       diffutils
 Requires:       dracut
@@ -152,6 +154,9 @@ for kernel_version in %{?kernel_versions}; do
 done
 
 %{?akmod_install}
+
+%check
+bash tests/test-sensor-timing.sh
 
 %post -n %{pkg_kmod_name}-common
 %systemd_post galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer

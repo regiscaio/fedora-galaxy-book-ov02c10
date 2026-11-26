@@ -34,6 +34,7 @@ static const struct acpi_device_id cvfd_ids[] = {
 
 #define OV02C10_LINK_FREQ_400MHZ	400000000ULL
 #define OV02C10_MCLK			19200000
+#define OV02C10_MCLK_26MHZ		26000000
 #define OV02C10_DATA_LANES		1
 #define OV02C10_RGB_DEPTH		10
 
@@ -694,13 +695,6 @@ static const struct ov02c10_mode supported_modes[] = {
 	},
 };
 
-static s64 ov02c10_get_pixel_rate(const struct ov02c10_mode *mode)
-{
-	/* CSI-2 lanes use DDR; convert the aggregate link rate to pixels/s. */
-	return link_freq_menu_items[mode->link_freq_index] * 2 *
-	       mode->mipi_lanes / OV02C10_RGB_DEPTH;
-}
-
 struct ov02c10 {
 	struct v4l2_subdev sd;
 	struct media_pad pad;
@@ -712,6 +706,9 @@ struct ov02c10 {
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *exposure;
+	/* The integer menu must live as long as its V4L2 control. */
+	s64 actual_link_freqs[ARRAY_SIZE(link_freq_menu_items)];
+	bool scaled_timing;
 
 	struct clk *img_clk;
 	struct regulator *avdd;
@@ -748,6 +745,38 @@ IS_ENABLED(CONFIG_INTEL_VSC)
 static inline struct ov02c10 *to_ov02c10(struct v4l2_subdev *subdev)
 {
 	return container_of(subdev, struct ov02c10, sd);
+}
+
+static const struct dmi_system_id ov02c10_26mhz_quirks[] = {
+	{
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "960XGL"),
+			DMI_EXACT_MATCH(DMI_BOARD_NAME, "NP960XGL-XG1BR"),
+		},
+	},
+	{ }
+};
+
+static bool ov02c10_needs_26mhz_timing(u32 ext_clk, u8 lanes)
+{
+	return ext_clk == OV02C10_MCLK_26MHZ && lanes == 2 &&
+	       dmi_check_system(ov02c10_26mhz_quirks);
+}
+
+/* The PLL tables are unchanged. On this board both clock domains run at
+ * 26 / 19.2 of the nominal rate; pad the frame to preserve its duration.
+ */
+static u32 ov02c10_clock_scaled(u32 nominal, bool scaled)
+{
+	return scaled ? (u64)nominal * 65 / 48 : nominal;
+}
+
+static s64 ov02c10_get_pixel_rate(const struct ov02c10 *ov02c10,
+				  const struct ov02c10_mode *mode)
+{
+	return ov02c10->actual_link_freqs[mode->link_freq_index] * 2 *
+	       mode->mipi_lanes / OV02C10_RGB_DEPTH;
 }
 
 static int ov02c10_read_reg(struct ov02c10 *ov02c10, u16 reg, u16 len, u32 *val)
@@ -908,8 +937,8 @@ static int ov02c10_init_controls(struct ov02c10 *ov02c10)
 	struct v4l2_fwnode_device_properties props;
 	const struct ov02c10_mode *cur_mode;
 	s64 exposure_max, h_blank, pixel_rate;
-	u32 vblank_min, vblank_max, vblank_default;
-	int size;
+	u32 vblank_min, vblank_max, vblank_default, vts_def;
+	unsigned int i;
 	int ret = 0;
 
 	ctrl_hdlr = &ov02c10->ctrl_handler;
@@ -924,24 +953,33 @@ IS_ENABLED(CONFIG_INTEL_VSC)
 
 	ctrl_hdlr->lock = &ov02c10->mutex;
 	cur_mode = ov02c10->cur_mode;
-	size = ARRAY_SIZE(link_freq_menu_items);
+	for (i = 0; i < ARRAY_SIZE(link_freq_menu_items); i++)
+		ov02c10->actual_link_freqs[i] =
+			ov02c10_clock_scaled(link_freq_menu_items[i],
+					     ov02c10->scaled_timing);
 
 	ov02c10->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr,
 						    &ov02c10_ctrl_ops,
 						    V4L2_CID_LINK_FREQ,
-						    size - 1, 0,
-						    link_freq_menu_items);
+						    ARRAY_SIZE(link_freq_menu_items) - 1, 0,
+						    ov02c10->actual_link_freqs);
 	if (ov02c10->link_freq)
 		ov02c10->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-	pixel_rate = ov02c10_get_pixel_rate(cur_mode);
+	pixel_rate = ov02c10_get_pixel_rate(ov02c10, cur_mode);
 	ov02c10->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &ov02c10_ctrl_ops,
 						V4L2_CID_PIXEL_RATE, 0,
 						pixel_rate, 1, pixel_rate);
 
 	vblank_min = cur_mode->vts_min - cur_mode->height;
 	vblank_max = OV02C10_VTS_MAX - cur_mode->height;
-	vblank_default = cur_mode->vts_def - cur_mode->height;
+	vts_def = ov02c10_clock_scaled(cur_mode->vts_def, ov02c10->scaled_timing);
+	if (ov02c10->scaled_timing)
+		dev_info(ov02c10->sd.dev,
+			 "26 MHz board timing: link %lld Hz, pixel rate %lld, VTS %u\n",
+			 ov02c10->actual_link_freqs[cur_mode->link_freq_index],
+			 pixel_rate, vts_def);
+	vblank_default = vts_def - cur_mode->height;
 	ov02c10->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &ov02c10_ctrl_ops,
 					    V4L2_CID_VBLANK, vblank_min,
 					    vblank_max, 1, vblank_default);
@@ -966,7 +1004,7 @@ IS_ENABLED(CONFIG_INTEL_VSC)
 	v4l2_ctrl_new_std(ctrl_hdlr, &ov02c10_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
 			  OV02C10_DGTL_GAIN_MIN, OV02C10_DGTL_GAIN_MAX,
 			  OV02C10_DGTL_GAIN_STEP, OV02C10_DGTL_GAIN_DEFAULT);
-	exposure_max = cur_mode->vts_def - OV02C10_EXPOSURE_MAX_MARGIN;
+	exposure_max = vts_def - OV02C10_EXPOSURE_MAX_MARGIN;
 	ov02c10->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &ov02c10_ctrl_ops,
 					      V4L2_CID_EXPOSURE,
 					      OV02C10_EXPOSURE_MIN,
@@ -1359,10 +1397,11 @@ static int ov02c10_set_format(struct v4l2_subdev *sd,
 		ov02c10->cur_mode = mode;
 		__v4l2_ctrl_s_ctrl(ov02c10->link_freq, mode->link_freq_index);
 		__v4l2_ctrl_s_ctrl_int64(ov02c10->pixel_rate,
-					   ov02c10_get_pixel_rate(mode));
+					   ov02c10_get_pixel_rate(ov02c10, mode));
 
 		/* Update limits and set FPS to default */
-		vblank_def = mode->vts_def - mode->height;
+		vblank_def = ov02c10_clock_scaled(mode->vts_def, ov02c10->scaled_timing) -
+			     mode->height;
 		__v4l2_ctrl_modify_range(ov02c10->vblank,
 					 mode->vts_min - mode->height,
 					 OV02C10_VTS_MAX - mode->height, 1,
@@ -1617,7 +1656,7 @@ static int ov02c10_identify_module(struct ov02c10 *ov02c10)
 	return 0;
 }
 
-static int ov02c10_check_hwcfg(struct device *dev, u8 *mipi_lanes)
+static int ov02c10_check_hwcfg(struct device *dev, u8 *mipi_lanes, bool *scaled_timing)
 {
 	struct v4l2_fwnode_endpoint bus_cfg = {
 		.bus_type = V4L2_MBUS_CSI2_DPHY
@@ -1658,6 +1697,7 @@ static int ov02c10_check_hwcfg(struct device *dev, u8 *mipi_lanes)
 		goto out_err;
 	}
 	*mipi_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
+	*scaled_timing = ov02c10_needs_26mhz_timing(ext_clk, *mipi_lanes);
 
 	if (!bus_cfg.nr_of_link_frequencies) {
 		dev_err(dev, "no link frequencies defined");
@@ -1741,10 +1781,11 @@ static int ov02c10_probe(struct i2c_client *client)
 	struct ov02c10 *ov02c10;
 	u8 ssdb_mipi_lanes;
 	u8 mipi_lanes;
+	bool scaled_timing;
 	int ret = 0;
 
 	/* Check HW config */
-	ret = ov02c10_check_hwcfg(&client->dev, &mipi_lanes);
+	ret = ov02c10_check_hwcfg(&client->dev, &mipi_lanes, &scaled_timing);
 	if (ret)
 		return ret;
 
@@ -1754,6 +1795,7 @@ static int ov02c10_probe(struct i2c_client *client)
 
 	v4l2_i2c_subdev_init(&ov02c10->sd, client, &ov02c10_subdev_ops);
 	ov02c10->mipi_lanes = mipi_lanes;
+	ov02c10->scaled_timing = scaled_timing;
 	ret = ov02c10_get_pm_resources(&client->dev);
 	if (ret)
 		return ret;

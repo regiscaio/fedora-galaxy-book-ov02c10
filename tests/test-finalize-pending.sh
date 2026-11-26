@@ -5,6 +5,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../scripts/finalize-pending.sh
 source "${repo_root}/scripts/finalize-pending.sh"
 
+# Independent Bash process: putting process_pending directly in an "if"
+# disables errexit throughout the function and can hide service-only bugs.
+if [[ "${1:-}" == --service-fixture ]]; then
+	state_root="$2/state"
+	module_root="$2/modules"
+	boot_root="$2/boot"
+	rpm_command="$2/rpm"
+	uname_command="$2/uname"
+	finalize_command="$2/finalize"
+	process_pending
+	exit
+fi
+
 test_root="$(mktemp -d /tmp/ov02c10-pending-test.XXXXXX)"
 trap 'rm -rf -- "$test_root"' EXIT
 
@@ -38,6 +51,10 @@ fake_finalize() {
 }
 
 finalize_command=fake_finalize
+# These test requests target an installed fake kernel, never the host rpmdb.
+module_root="$test_root/modules"
+boot_root="$test_root/boot"
+mkdir -p "$boot_root" "$module_root/$kernel/kernel"
 
 write_marker migration "$state_root"
 process_pending
@@ -134,6 +151,95 @@ if process_pending >/dev/null 2>&1; then
 	exit 1
 fi
 [[ -e "${pending_dir}/${kernel}.pending" ]]
+
+(
+	fixture="$test_root/service"
+	export fixture
+	state_root="$fixture/state"
+	pending_dir="$state_root/pending"
+	mkdir -p "$pending_dir" "$fixture/boot" "$fixture/modules/7.3.3-test/updates"
+	chmod 0755 "$state_root" "$pending_dir"
+	printf 'manual data\n' > "$fixture/modules/7.3.3-test/updates/unowned"
+	cat > "$fixture/uname" <<'MOCK'
+#!/usr/bin/bash
+[[ "$*" == "-r" ]] && echo 7.3.5-test
+MOCK
+	cat > "$fixture/rpm" <<'MOCK'
+#!/usr/bin/bash
+set -eu
+case "$*" in
+	'-q --whatprovides kernel-uname-r --provides')
+		cat "$fixture/providers"
+		[[ ! -e "$fixture/rpm-warning" ]] || echo 'rpmdb warning' >&2
+		[[ ! -e "$fixture/rpm-error" ]]
+		;;
+	'-q -- kmod-galaxybook-ov02c10-'*)
+		if [[ -f "$fixture/installed-kmod" && "$3" == "kmod-galaxybook-ov02c10-7.3.3-test" ]]; then
+			echo "$3-1.00.26-1.fc44.x86_64"; exit 0
+		fi
+		echo "package $3 is not installed" >&2; exit 1
+		;;
+	*) exit 2 ;;
+esac
+MOCK
+	cat > "$fixture/finalize" <<'MOCK'
+#!/usr/bin/bash
+set -eu
+[[ "$1" == --kernel ]]
+echo "$2" >> "$fixture/calls"
+[[ ! -f "$fixture/fail-$2" ]]
+MOCK
+	chmod +x "$fixture/rpm" "$fixture/finalize" "$fixture/uname"
+
+	run_worker() { /usr/bin/bash "$0" --service-fixture "$fixture"; }
+	configure_inventory() {
+		printf 'kernel-uname-r = 7.3.4-test\nkernel-uname-r = 7.3.5-test\n' > "$fixture/providers"
+	}
+	configure_inventory
+
+	write_marker migration "$state_root"
+	write_marker 7.3.3-test
+	run_worker
+	[[ ! -e "$pending_dir/7.3.3-test.pending" && -e "$state_root/migration.pending" ]]
+	[[ ! -e "$fixture/calls" && "$(<"$fixture/modules/7.3.3-test/updates/unowned")" == 'manual data' ]]
+
+	write_marker 7.3.3-test
+	write_marker 7.3.4-test
+	write_marker 7.3.5-test
+	touch "$fixture/fail-7.3.4-test"
+	if run_worker; then echo 'installed kernel failure was swallowed' >&2; exit 1; fi
+	[[ ! -e "$pending_dir/7.3.3-test.pending" && -e "$pending_dir/7.3.4-test.pending" ]]
+	[[ ! -e "$pending_dir/7.3.5-test.pending" && ! -e "$state_root/migration.pending" ]]
+	[[ "$(<"$fixture/calls")" == $'7.3.4-test\n7.3.5-test' ]]
+	rm "$fixture/fail-7.3.4-test"
+	run_worker
+	[[ ! -e "$pending_dir/7.3.4-test.pending" ]]
+
+	# Each ambiguous or non-RPM boot case must keep the failed request alive.
+	touch "$fixture/fail-7.3.3-test"
+	write_marker 7.3.3-test
+	for reason in boot module-tree installed-kmod rpm-warning rpm-error no-running malformed-provider; do
+		case "$reason" in
+			boot) ln -s absent "$fixture/boot/vmlinuz-7.3.3-test" ;;
+			module-tree) mkdir "$fixture/modules/7.3.3-test/kernel" ;;
+			no-running) printf 'kernel-uname-r = 7.3.4-test\n' > "$fixture/providers" ;;
+			malformed-provider) echo 'kernel-uname-r =>' >> "$fixture/providers" ;;
+			*) touch "$fixture/$reason" ;;
+		esac
+		if run_worker > /dev/null 2>&1; then echo "ambiguous removal accepted: $reason" >&2; exit 1; fi
+		[[ -f "$pending_dir/7.3.3-test.pending" ]]
+		case "$reason" in
+			boot) unlink "$fixture/boot/vmlinuz-7.3.3-test" ;;
+			module-tree) rmdir "$fixture/modules/7.3.3-test/kernel" ;;
+			no-running|malformed-provider) configure_inventory ;;
+			*) rm "$fixture/$reason" ;;
+		esac
+	done
+	# A superficially matching marker with trailing extra bytes is not ours.
+	printf '\n' >> "$pending_dir/7.3.3-test.pending"
+	if run_worker >/dev/null 2>&1; then echo 'foreign marker retired' >&2; exit 1; fi
+	[[ -e "$pending_dir/7.3.3-test.pending" ]]
+)
 
 lock_order=()
 acquire_kmod_lifecycle_lock() {

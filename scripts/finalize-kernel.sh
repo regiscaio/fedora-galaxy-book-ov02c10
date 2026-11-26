@@ -317,7 +317,9 @@ finalize_kernel() {
 	expected_dir="${module_root}/${kernel}/extra/galaxybook-ov02c10/drivers/media/i2c"
 
 	printf 'Refreshing module dependencies for %s\n' "$kernel"
-	if ! "$depmod_command" -a "$kernel"; then
+	# Only depmod writes public module-discovery indexes. Keep the caller's
+	# umask unchanged for dracut, readiness state and locks.
+	if ! (umask 022 && "$depmod_command" -a "$kernel"); then
 		fail "depmod failed for ${kernel}"
 		return 1
 	fi

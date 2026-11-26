@@ -34,24 +34,20 @@ entre o módulo do sensor e o restante da pilha IPU6 instalada no sistema.
 
 ## Status atual
 
-No estado validado em agosto de 2026, o empacotamento instala o módulo externo,
-prioriza-o sobre a cópia in-tree, registra o sensor no grafo IPU6 e permite que
-o `libcamera` enumere a câmera. Isso comprova **instalação e registro**, não
-captura estável.
+Em agosto de 2026, o módulo externo registrou o sensor no grafo IPU6 e o
+`libcamera` enumerou a câmera, mas a captura não entregou quadros. O journal
+registrou `csi2-4 error: Frame sync error`.
 
-A captura no Galaxy Book4 Ultra ainda termina sem quadros e registra
-`csi2-4 error: Frame sync error`. A máquina fornece clock externo de 26 MHz,
-mas nem o [driver Linux v7.1](https://github.com/torvalds/linux/blob/v7.1/drivers/media/i2c/ov02c10.c)
-nem a [base Intel IPU6](https://github.com/intel/ipu6-drivers/blob/master/drivers/media/i2c/ov02c10.c)
-trazem uma sequência PLL de 26 MHz validada para manter o link de 400 MHz. A
-[discussão Intel sobre o clock](https://github.com/intel/ipu6-drivers/issues/171)
-também identifica essa sequência de registradores como o ponto ausente.
+O novo ajuste só se aplica ao Samsung Galaxy Book4 Ultra `960XGL` com placa
+DMI `NP960XGL-XG1BR`, sensor a **26 MHz** e duas lanes CSI-2. Na configuração
+nominal de 400 MHz, o driver passa a informar o link real de **541666666 Hz**
+e a taxa de **216666666 pixels/s**; o VTS padrão passa para **3152 linhas**.
+Não reprograma o PLL nem altera a ponte IPU6. Outros modelos, clocks e
+configurações de lanes mantêm o comportamento anterior.
 
-Portanto, este projeto **não declara a câmera funcional** neste hardware. Ele
-corrige o ciclo de instalação, probe e metadados sem inventar registradores de
-PLL. A exposição para navegadores e comunicadores WebRTC continua no
-`Galaxy Book Setup`, mas nenhuma bridge de userspace corrige o erro físico de
-sincronismo.
+Em 21 de outubro, [4nrry mediu 30,08 fps no mesmo modelo de placa](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/123#issuecomment-6319696718),
+com outro driver baseado nesses tempos. Esse resultado não valida este pacote
+Fedora: a captura local só fica comprovada após o teste de dez quadros abaixo.
 
 ## O que este repositório entrega
 
@@ -98,11 +94,9 @@ O delta downstream atual é intencionalmente pequeno:
   uso;
 - valida os recursos de power management e o SSDB, trata defer de probe com a
   API apropriada e publica os controles de orientação/rotação do firmware;
-- corrige os metadados do modo de duas lanes para `pixel_rate=160 MHz` e
-  `HTS=2280`, mantendo o mesmo line time e produzindo `HBLANK` válido.
-
-Essa correção de timing é de metadados: ela não altera a tabela PLL do sensor e
-não resolve, por si só, o `Frame sync error` observado com clock de 26 MHz.
+- mantém `HTS=2280` no modo de duas lanes. A taxa nominal a 19,2 MHz é
+  de 160 milhões de pixels/s; somente a configuração de 26 MHz descrita
+  acima ajusta as taxas anunciadas e a duração padrão do quadro.
 
 O rebase para a base Intel IPU6 foi uma decisão deliberada: o módulo antigo,
 embora resolvesse o probe do sensor, tinha divergido demais do stack instalado
@@ -276,8 +270,9 @@ modinfo -n ov02c10
 rpm -qf "$(modinfo -n ov02c10)"
 lsmod | grep '^ov02c10 '
 cam -l
-cam -c 1 --capture=10
-journalctl -b -k | grep -Ei 'ov02c10|frame sync|csi2'
+capture_start=$(date --iso-8601=seconds)
+timeout 15s cam -c 1 --capture=10
+journalctl -b -k --since "$capture_start" | grep -Ei 'ov02c10|frame sync|csi2'
 ```
 
 Os três níveis significam:
@@ -286,12 +281,13 @@ Os três níveis significam:
   `extra/galaxybook-ov02c10/drivers/media/i2c` e `rpm -qf` retorna exatamente o
   kmod do kernel em uso;
 - **registrado**: o módulo está em `lsmod` e a câmera aparece em `cam -l`;
-- **capturando**: `cam --capture` entrega os dez quadros e não aparecem novos
-  erros `Frame sync`/CSI-2 no journal.
+- **capturando**: selecione em `cam -l` o número da câmera interna (o exemplo
+  usa `1`). O teste deve terminar com dez quadros, cada um com `bytesused > 0`,
+  sem gravar imagens (não use `--file`).
 
-No Galaxy Book4 Ultra testado, os dois primeiros níveis passam, mas o terceiro
-ainda falha. Portanto, enumeração no `libcamera` não deve ser usada como prova
-de que a câmera está funcional.
+Um aviso de sincronismo isolado ao iniciar não comprova perda de quadros.
+Erros recorrentes durante a captura, quadros vazios ou o limite de tempo
+atingido não constituem sucesso.
 
 Se o boot ainda registrar:
 
@@ -301,8 +297,9 @@ probe with driver ov02c10 failed with error -22
 ```
 
 esse log é compatível com a rejeição de 26 MHz do driver in-tree, mas sozinho
-não prova a origem do módulo. Confirme o caminho e o owner RPM exato com os
-comandos acima. Os checks adicionais mais úteis são:
+não prova a origem do módulo. `modinfo -n` e `rpm -qf` identificam o
+arquivo em disco, não o módulo carregado. Se o RPM foi instalado depois do
+boot, o kernel pode continuar usando a cópia anterior. Confira também:
 
 ```bash
 journalctl -b -u akmods --no-pager

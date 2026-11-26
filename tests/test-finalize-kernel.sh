@@ -15,7 +15,10 @@ expected_dir="${module_root}/${kernel}/extra/galaxybook-ov02c10/drivers/media/i2
 mkdir -p "$expected_dir" "$lock_parent"
 touch "${expected_dir}/ov02c10.ko.xz"
 
-depmod_args=()
+depmod_log="$test_root/depmod-calls"
+index_fixture="$test_root/index-fixture"
+mkdir -p "$index_fixture/lib/modules/$kernel"
+touch "$index_fixture/lib/modules/$kernel"/{modules.order,modules.builtin,modules.builtin.modinfo}
 dracut_args=()
 migrate_calls=0
 cleanup_args=()
@@ -30,7 +33,8 @@ legacy_config=""
 legacy_module=""
 
 fake_depmod() {
-	depmod_args=("$@")
+	printf '%s\n' "$*" >> "$depmod_log"
+	/usr/bin/depmod -b "$index_fixture" "$@"
 }
 
 fake_rpm() {
@@ -92,6 +96,7 @@ fake_modinfo() {
 
 fake_dracut() {
 	dracut_args=("$@")
+	: > "$test_root/mock-initramfs"
 }
 
 fake_lsinitrd() {
@@ -155,11 +160,18 @@ publish_readiness_attestation() {
 	fake_publish_attestation "$@"
 }
 
+umask 077
+/usr/bin/depmod -b "$index_fixture" -a "$kernel"
+[[ "$(stat -c %a "$index_fixture/lib/modules/$kernel/modules.dep.bin")" == 600 ]]
 reconcile_kernel "$kernel"
 [[ "${lock_order[*]}" == "global private rpm" ]]
 [[ "$migrate_calls" -eq 1 ]]
 [[ "${cleanup_args[*]}" == "--apply --kernel ${kernel}" ]]
-[[ "${depmod_args[*]}" == "-a ${kernel}" ]]
+[[ "$(<"$depmod_log")" == "-a ${kernel}" ]]
+for index in modules.dep{,.bin} modules.alias{,.bin}; do
+	[[ "$(stat -c %a "$index_fixture/lib/modules/$kernel/$index")" == 644 ]]
+done
+[[ "$(umask)" == 0077 && "$(stat -c %a "$test_root/mock-initramfs")" == 600 ]]
 [[ "${dracut_args[*]}" == "--force --kver ${kernel} --add-drivers ov02c10" ]]
 [[ "$attestation_calls" -eq 1 ]]
 
@@ -179,7 +191,7 @@ if reconcile_kernel "$kernel" >/dev/null 2>&1; then
 	exit 1
 fi
 [[ "$migrate_calls" -eq 1 && "${#cleanup_args[@]}" -eq 3 ]]
-[[ "${depmod_args[*]}" == "-a ${kernel}" ]]
+[[ "$(<"$depmod_log")" == "-a ${kernel}" ]]
 [[ "$attestation_calls" -eq 1 ]]
 
 acquire_kmod_lifecycle_lock() { return 0; }
@@ -200,14 +212,14 @@ printf 'legacy load rule\n' > "$legacy_config"
 printf 'stale module\n' > "$legacy_module"
 
 owner_mode="wrong"
-depmod_args=()
+: > "$depmod_log"
 migrate_calls=0
 cleanup_args=()
 if reconcile_kernel "$kernel" >/dev/null 2>&1; then
 	printf 'finalize-kernel accepted a payload owned by another package\n' >&2
 	exit 1
 fi
-[[ "${#depmod_args[@]}" -eq 0 ]]
+[[ ! -s "$depmod_log" ]]
 [[ "$migrate_calls" -eq 0 && "${#cleanup_args[@]}" -eq 0 ]]
 assert_legacy_preserved
 
@@ -225,7 +237,7 @@ if reconcile_kernel "$kernel" >/dev/null 2>&1; then
 	printf 'finalize-kernel accepted a payload older than the common package\n' >&2
 	exit 1
 fi
-[[ "${#depmod_args[@]}" -eq 0 ]]
+[[ ! -s "$depmod_log" ]]
 [[ "$migrate_calls" -eq 0 && "${#cleanup_args[@]}" -eq 0 ]]
 assert_legacy_preserved
 
@@ -244,7 +256,7 @@ if reconcile_kernel "$kernel" >/dev/null 2>&1; then
 	printf 'finalize-kernel accepted a payload for another kernel\n' >&2
 	exit 1
 fi
-[[ "${#depmod_args[@]}" -eq 0 ]]
+[[ ! -s "$depmod_log" ]]
 [[ "$migrate_calls" -eq 0 && "${#cleanup_args[@]}" -eq 0 ]]
 assert_legacy_preserved
 

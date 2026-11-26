@@ -8,6 +8,10 @@ sort_command="/usr/bin/sort"
 basename_command="/usr/bin/basename"
 rm_command="/usr/bin/rm"
 stat_command="/usr/bin/stat"
+rpm_command="/usr/bin/rpm"
+uname_command="/usr/bin/uname"
+module_root="/usr/lib/modules"
+boot_root="/boot"
 marker_version="GALAXYBOOK_OV02C10_FINALIZATION_V1"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,15 +38,48 @@ validate_kernel_name() {
 	fi
 }
 
+# Called under the lifecycle and RPM read locks. A leftover updates/ directory
+# is common after kernel removal and may contain files we do not own. Retire
+# only our authenticated request, never the module tree or a readiness record.
+queued_kernel_is_retired() {
+	local kernel="$1" running path result status=0
+	local package="kmod-galaxybook-ov02c10-${1}"
+
+	running="$("$uname_command" -r)" && validate_kernel_name "$running" || return 1
+	[[ "$kernel" != "$running" && -d "$boot_root" && -d "$module_root" ]] || return 1
+	for path in "$boot_root/vmlinuz-$kernel" "$boot_root/initramfs-$kernel.img" \
+		"$module_root/$kernel/vmlinuz" "$module_root/$kernel/kernel" \
+		"$module_root/$kernel/modules.builtin" "$module_root/$kernel/extra/galaxybook-ov02c10"; do
+		[[ ! -e "$path" && ! -L "$path" ]] || return 1
+	done
+
+	result="$(LC_ALL=C "$rpm_command" -q -- "$package" 2>&1)" || status=$?
+	[[ "$status" -eq 1 && "$result" == "package $package is not installed" ]] || return 1
+	# Enumerate actual provided uname-r values (not RPM names or EVRs). Seeing
+	# the running kernel is a positive control for a usable rpmdb. Any rpm/awk
+	# error, extra diagnostic, or malformed provider leaves the marker live.
+	result="$({ LC_ALL=C "$rpm_command" -q --whatprovides kernel-uname-r --provides |
+		LC_ALL=C /usr/bin/awk -v target="$kernel" -v running="$running" '
+			$1 == "kernel-uname-r" {
+				if (NF != 3 || $2 != "=" || $3 !~ /^[[:alnum:]][[:alnum:].+_-]*$/) bad=1
+				if ($3 == target) present=1
+				if ($3 == running) witness=1
+			}
+			END { if (!bad && witness && !present) print "retired" }
+		'; } 2>&1)" || return 1
+	[[ "$result" == retired ]]
+}
+
 process_pending() {
 	local pending_dir="${state_root}/pending"
 	local migration_marker="${state_root}/migration.pending"
-	local marker name kernel owner mode links content expected_content
+	local marker name kernel owner mode links
 	local marker_identity current_identity migration_identity=""
 	local migration_completed=0
 	local result=0
 	local -a markers=()
 	local -a validation_markers=()
+	local -A identities=()
 
 	state_directory_stat_command="$stat_command"
 	if ! validate_state_hierarchy "$state_root"; then
@@ -69,6 +106,7 @@ process_pending() {
 			fail "refusing unsafe finalization marker: ${marker}"
 			return 1
 		fi
+		identities["$marker"]="$("$stat_command" -Lc '%d:%i' -- "$marker")" || return 1
 		owner="$("$stat_command" -c '%u:%g' -- "$marker")" || return 1
 		mode="$("$stat_command" -c '%a' -- "$marker")" || return 1
 		links="$("$stat_command" -c '%h' -- "$marker")" || return 1
@@ -81,9 +119,7 @@ process_pending() {
 			return 1
 		fi
 		name="$("$basename_command" "$marker")"
-		content="$(<"$marker")"
-		expected_content="${marker_version}"$'\n'"request=${name%.pending}"
-		if [[ "$content" != "$expected_content" ]]; then
+		if ! printf '%s\nrequest=%s\n' "$marker_version" "${name%.pending}" | /usr/bin/cmp -s - "$marker"; then
 			fail "refusing malformed finalization marker: ${marker}"
 			return 1
 		fi
@@ -93,8 +129,8 @@ process_pending() {
 	# kernel reconciliation validates its replacement before migration and is
 	# therefore the only safe proof that the legacy load rule can be retired.
 	# Keep this marker durable until such a reconciliation succeeds.
-	if [[ -f "$migration_marker" && ! -L "$migration_marker" ]]; then
-		migration_identity="$("$stat_command" -Lc '%d:%i' -- "$migration_marker")" || return 1
+	if [[ -n "${identities[$migration_marker]:-}" ]]; then
+		migration_identity="${identities[$migration_marker]}"
 		printf 'Legacy migration remains queued until a validated kernel reconciliation succeeds\n'
 	fi
 
@@ -105,17 +141,19 @@ process_pending() {
 			result=1
 			continue
 		}
-		marker_identity="$("$stat_command" -Lc '%d:%i' -- "$marker")" || {
-			result=1
-			continue
-		}
+		marker_identity="${identities[$marker]}"
 
-		if ! "$finalize_command" --kernel "$kernel"; then
-			fail "kernel finalization failed for queued kernel ${kernel}"
+		if queued_kernel_is_retired "$kernel"; then
+			printf 'Retiring finalization request for removed kernel %s\n' "$kernel"
+		elif "$finalize_command" --kernel "$kernel"; then
+			migration_completed=1
+		else
+			# A failure remains retryable, but must not starve later kernels
+			# under the service's set -e execution.
+			printf 'galaxybook-ov02c10: kernel finalization failed for queued kernel %s\n' "$kernel" >&2
 			result=1
 			continue
 		fi
-		migration_completed=1
 		if ! current_identity="$("$stat_command" -Lc '%d:%i' -- "$marker" 2>/dev/null)"; then
 			continue
 		fi
@@ -124,7 +162,7 @@ process_pending() {
 			continue
 		fi
 		"$rm_command" -- "$marker" || {
-			fail "could not clear completed finalization marker: ${marker}"
+			printf 'galaxybook-ov02c10: could not clear finalization marker: %s\n' "$marker" >&2
 			result=1
 		}
 	done

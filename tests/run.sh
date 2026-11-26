@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+bash "${repo_root}/tests/test-sensor-timing.sh"
+
 for test_script in \
 	"${repo_root}/tests/test-finalize-kernel.sh" \
 	"${repo_root}/tests/test-readiness-attestation.sh" \
