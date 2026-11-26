@@ -83,6 +83,10 @@ O empacotamento Fedora gera:
 - `kmod-galaxybook-ov02c10`
 - `galaxybook-ov02c10-kmod-common`
 
+Na reconstrução local, o `akmods` indica o kernel de destino. Nesse modo, o
+pacote gera apenas o RPM daquele kernel. O `-common` instalado continua
+responsável pela fila de finalização; um rebuild não deve reinstalá-lo.
+
 ## O que o patch muda hoje
 
 O delta downstream atual é intencionalmente pequeno:

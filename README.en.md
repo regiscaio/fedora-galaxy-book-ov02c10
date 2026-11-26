@@ -85,6 +85,10 @@ Fedora packaging generates:
 - `kmod-galaxybook-ov02c10`
 - `galaxybook-ov02c10-kmod-common`
 
+During a local rebuild, `akmods` specifies the target kernel. In that mode
+the build produces only that kernel’s RPM. The installed common package
+continues to queue finalization and is not reinstalled by the rebuild.
+
 ## What the patch changes today
 
 The current downstream delta is intentionally small:

@@ -85,6 +85,12 @@ sed 's/%/%%/g' scripts/finalizer-transaction.sh \
 
 rpmspec -P --define "_sourcedir ${spec_sourcedir}" \
 	packaging/fedora/galaxybook-ov02c10-kmod.spec > "$expanded_spec"
+buildable_names() {
+	rpmspec -q --builtrpms --qf '%{NAME}\n' --define "_sourcedir ${spec_sourcedir}" \
+		"$@" packaging/fedora/galaxybook-ov02c10-kmod.spec | LC_ALL=C sort
+}
+[[ "$(buildable_names)" == $'akmod-galaxybook-ov02c10\ngalaxybook-ov02c10-kmod-common\nkmod-galaxybook-ov02c10' ]] || \
+	fail "the distribution build must produce exactly the akmod, common and metapackage"
 rg -Fq "%pretrans -n galaxybook-ov02c10-kmod-common -p \"${expected_finalizer_interpreter}\" -f ${spec_sourcedir}/finalizer-transaction-pretrans.sh" \
 	"$expanded_spec" || fail "expanded pretrans lost its exact env-i ABI"
 rg -Fq "%posttrans -n galaxybook-ov02c10-kmod-common -p \"${expected_finalizer_interpreter}\"" \
@@ -125,6 +131,8 @@ for kernel_spec in \
 do
 	kernel="${kernel_spec%%:*}"
 	spec_output="${kernel_spec#*:}"
+	[[ "$(buildable_names --define "kernels ${kernel}")" == "kmod-galaxybook-ov02c10-${kernel}" ]] || \
+		fail "akmodsbuild would give DNF more than the per-kernel RPM for ${kernel}"
 	rpmspec -P \
 		--define "_sourcedir ${spec_sourcedir}" \
 		--define "kernels ${kernel}" \
@@ -137,6 +145,8 @@ do
 		"$spec_output" || fail "expanded spec lost the build loop for ${kernel}"
 	rg -Fq 'drivers/media/i2c/ov02c10.ko' "$spec_output" || \
 		fail "expanded spec lost the OV02C10 module install for ${kernel}"
+	rg -q '^Requires:[[:space:]]+galaxybook-ov02c10-kmod-common >=' "$spec_output" || \
+		fail "per-kernel RPM lost its dependency on the common package"
 	if rg -q '^Requires\(post(un)?\):[[:space:]]+.*/sbin/depmod$|_kmodtool_depmod_post' \
 		"$spec_output"
 	then

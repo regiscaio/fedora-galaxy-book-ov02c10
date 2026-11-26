@@ -87,6 +87,10 @@ Il packaging Fedora genera:
 - `kmod-galaxybook-ov02c10`
 - `galaxybook-ov02c10-kmod-common`
 
+Durante la ricompilazione locale, `akmods` indica il kernel di destinazione.
+In questa modalità viene generato solo il relativo RPM. Il pacchetto comune
+già installato gestisce la coda di finalizzazione e non viene reinstallato.
+
 ## Cosa cambia oggi la patch
 
 Il delta downstream attuale è volutamente piccolo:

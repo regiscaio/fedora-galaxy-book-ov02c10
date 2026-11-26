@@ -60,6 +60,10 @@ stack used on Fedora, plus the minimal downstream metadata needed for Samsung
 Galaxy Book systems. It is meant to be shipped as an akmod on Fedora so the
 module stays in sync with the installed Intel IPU6 userspace and kernel stack.
 
+# akmodsbuild sets kernels for local builds and passes all binary RPMs it
+# receives to DNF. Ship the common package only in the distribution build;
+# a kernel rebuild must not reinstall the system-wide services and triggers.
+%if %{undefined kernels}
 %package -n %{pkg_kmod_name}-common
 Summary:        Common files for the %{prjname} kernel module packaging
 Requires:       bash
@@ -86,6 +90,7 @@ Requires(posttrans): diffutils
 %description -n %{pkg_kmod_name}-common
 Common documentation and licensing files for the %{prjname} kernel module
 packaging.
+%endif
 
 %prep
 %if %{kmodtool_queue_only_build_verified} != 1 || %{kmodtool_queue_only_filter_deferred} != 0
@@ -105,6 +110,10 @@ for kernel_version in %{?kernel_versions}; do
 done
 
 %install
+# Fedora buildroot policy scripts enter /usr even in kernel-only builds;
+# kmodtool's module payload itself lives under /lib/modules.
+install -d %{buildroot}%{_prefix}
+%if %{undefined kernels}
 install -d %{buildroot}%{_datadir}/doc/%{pkg_kmod_name}
 install -m 0644 README.md %{buildroot}%{_datadir}/doc/%{pkg_kmod_name}/README.md
 install -d %{buildroot}%{_datadir}/licenses/%{name}
@@ -147,6 +156,7 @@ install -d -m 0755 \
   %{buildroot}%{_sharedstatedir}/galaxybook-ov02c10/pending
 install -d -m 0755 \
   %{buildroot}%{_sharedstatedir}/galaxybook-ov02c10/ready
+%endif
 
 for kernel_version in %{?kernel_versions}; do
   install -Dm0644 _kmod_build_${kernel_version%%___*}/ov02c10.ko \
@@ -158,6 +168,7 @@ done
 %check
 bash tests/test-sensor-timing.sh
 
+%if %{undefined kernels}
 %post -n %{pkg_kmod_name}-common
 %systemd_post galaxybook-ov02c10-finalize.path galaxybook-ov02c10-finalize.timer
 
@@ -200,5 +211,6 @@ bash tests/test-sensor-timing.sh
 %dir %{_sharedstatedir}/galaxybook-ov02c10
 %dir %{_sharedstatedir}/galaxybook-ov02c10/pending
 %dir %{_sharedstatedir}/galaxybook-ov02c10/ready
+%endif
 
 %changelog
